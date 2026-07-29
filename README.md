@@ -8,8 +8,22 @@ like 2009. Acrobat can do everything and takes eight seconds to show you a
 page. Stirling-PDF has fifty tools and no coherent interface. LumenPDF is an
 attempt at all three at once.
 
-Status: **early scaffold.** The render pipeline and design system are in place;
-editing is not yet implemented.
+Status: **working editor.** Opens, renders, searches, selects, annotates, and
+saves. Text editing and OCR are not implemented yet.
+
+## What works today
+
+**Reading** — open, render, scroll, zoom, fit-width, page thumbnails, document
+outline with collapsible sections, full-text search (245 pages and 1028 matches
+in 130 ms), match highlighting with a strong marker on the current hit.
+
+**Selecting** — click-drag and double-click selection that follows the real
+text flow, including across columns and across pages. Copy to clipboard.
+
+**Editing** — highlight, underline and strike-through in four colours, applied
+from a floating bar that appears over the selection. Rotate, reorder and delete
+pages, all undoable. Save, with the annotations written as standards-conformant
+PDF markup that other PDF software reads.
 
 ---
 
@@ -63,8 +77,8 @@ that draws placeholder pages, which is enough to work on the UI.
 
 ## Roadmap
 
-**MVP** — open, render, scroll, zoom, search, thumbnails, outline, annotate,
-reorder pages, merge/split, save.
+**MVP** — ~~open, render, scroll, zoom, search, thumbnails, outline, annotate,
+reorder pages, save~~ ✅ · merge and split remain.
 **v1** — text editing, forms, signatures, true redaction, compression, export.
 **v2** — OCR, batch processing, split-view comparison, AI summarisation.
 

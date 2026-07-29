@@ -90,6 +90,8 @@ qt_add_executable(lumenpdf
     src/bridge/SelectionController.cpp
     src/bridge/AnnotationController.h
     src/bridge/AnnotationController.cpp
+    src/bridge/PageOperations.h
+    src/bridge/PageOperations.cpp
 
     src/platform/PlatformWindow.h
     src/platform/PlatformWindow.cpp

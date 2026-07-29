@@ -4,6 +4,7 @@
 
 #include <QColor>
 #include <QImage>
+#include <QSharedPointer>
 #include <QMutex>
 #include <QPointF>
 #include <QSizeF>
@@ -99,6 +100,27 @@ public:
     // Index of the topmost annotation whose rectangle contains `point`, or -1.
     int annotationAt(int pageIndex, const QPointF &point) const;
 
+    // -- Page operations ---------------------------------------------------
+    //
+    // All of these renumber pages, so page geometry is rebuilt afterwards and
+    // callers must reset any model they expose.
+
+    bool rotatePage(int pageIndex, int quarterTurns);
+    int pageRotation(int pageIndex) const;
+
+    bool movePage(int from, int to);
+
+    // Deletes a page, first copying it into `removedInto` so the operation can
+    // be undone. Pass a document created with createScratch(); the page lands
+    // at its end and the index is returned through `stashIndex`.
+    bool deletePage(int pageIndex, PdfDocument *removedInto, int *stashIndex);
+
+    // Copies one page out of `source` and inserts it at `atIndex`.
+    bool insertPageFrom(const PdfDocument &source, int sourceIndex, int atIndex);
+
+    // An empty in-memory document, used as the holding area for deleted pages.
+    static QSharedPointer<PdfDocument> createScratch();
+
     bool isModified() const { return m_modified; }
 
     // Writes the document, annotations included. Saving over the original is
@@ -108,6 +130,10 @@ public:
 private:
     void buildOutline();
     void invalidatePage(int pageIndex);
+
+    // Re-reads page sizes after an operation that renumbered pages.
+    // Caller holds m_mutex.
+    void rebuildPageInfo();
 
     // Text extraction handles for the most recently touched page, kept open.
     //

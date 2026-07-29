@@ -1,6 +1,7 @@
 #include "bridge/AnnotationController.h"
 #include "bridge/DocumentController.h"
 #include "bridge/OutlineModel.h"
+#include "bridge/PageOperations.h"
 #include "bridge/SearchController.h"
 #include "bridge/SelectionController.h"
 #include "core/PdfEngine.h"
@@ -179,6 +180,32 @@ int main(int argc, char *argv[])
                              },
                              Qt::SingleShotConnection);
         }
+    }
+
+    // Test hook: run a page operation, as "rotate,<page>,<turns>",
+    // "delete,<page>" or "move,<from>,<to>". Append ",undo" to exercise the
+    // undo path in the same run.
+    if (qEnvironmentVariableIsSet("LUMEN_PAGEOP")) {
+        const QStringList parts = qEnvironmentVariable("LUMEN_PAGEOP").split(u',');
+        QObject::connect(controller, &lumen::DocumentController::documentChanged,
+                         controller, [controller, parts] {
+                             if (controller->pageCount() <= 0 || parts.isEmpty())
+                                 return;
+
+                             auto *pages = controller->pages();
+                             const QString op = parts.at(0);
+
+                             if (op == QLatin1String("rotate") && parts.size() >= 3)
+                                 pages->rotate(parts.at(1).toInt(), parts.at(2).toInt());
+                             else if (op == QLatin1String("delete") && parts.size() >= 2)
+                                 pages->remove(parts.at(1).toInt());
+                             else if (op == QLatin1String("move") && parts.size() >= 3)
+                                 pages->move(parts.at(1).toInt(), parts.at(2).toInt());
+
+                             if (parts.contains(QLatin1String("undo")))
+                                 pages->undo();
+                         },
+                         Qt::SingleShotConnection);
     }
 
     installCaptureHook(engine);

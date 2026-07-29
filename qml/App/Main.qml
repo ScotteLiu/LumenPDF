@@ -54,6 +54,15 @@ ApplicationWindow {
         sequence: "Esc"
         onActivated: Document.selection.clear()
     }
+
+    Shortcut {
+        sequences: [StandardKey.Undo]
+        onActivated: Document.pages.undo()
+    }
+    Shortcut {
+        sequences: [StandardKey.Redo]
+        onActivated: Document.pages.redo()
+    }
     Shortcut { sequence: "Ctrl+Shift+D"; onActivated: Tokens.dark = !Tokens.dark }
 
     Shortcut {
@@ -129,6 +138,32 @@ ApplicationWindow {
             active: Document.modified
             anchors.verticalCenter: parent.verticalCenter
             onClicked: Document.save()
+        }
+
+        Item { width: Tokens.space3; height: 1 }
+        LumenSeparator {
+            vertical: true
+            height: Tokens.space5
+            anchors.verticalCenter: parent.verticalCenter
+        }
+        Item { width: Tokens.space3; height: 1 }
+
+        LumenIconButton {
+            iconPath: Icons.undo
+            tooltip: Document.pages.canUndo ? Document.pages.undoLabel
+                                            : qsTr("Nothing to undo")
+            enabled: Document.pages.canUndo
+            anchors.verticalCenter: parent.verticalCenter
+            onClicked: Document.pages.undo()
+        }
+
+        LumenIconButton {
+            iconPath: Icons.redo
+            tooltip: Document.pages.canRedo ? Document.pages.redoLabel
+                                            : qsTr("Nothing to redo")
+            enabled: Document.pages.canRedo
+            anchors.verticalCenter: parent.verticalCenter
+            onClicked: Document.pages.redo()
         }
 
         Item { width: Tokens.space3; height: 1 }

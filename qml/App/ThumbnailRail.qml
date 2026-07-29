@@ -96,6 +96,68 @@ Item {
             TapHandler {
                 onTapped: root.pageRequested(index)
             }
+
+            // Page actions, revealed on hover rather than always present.
+            // A rail of 200 thumbnails each wearing three buttons is noise;
+            // the actions belong to whichever page you are pointing at.
+            Item {
+                id: pageActions
+
+                anchors.horizontalCenter: card.horizontalCenter
+                anchors.bottom: card.bottom
+                anchors.bottomMargin: Tokens.space1
+
+                width: actionRow.width + Tokens.space2
+                height: actionRow.height + Tokens.space2
+
+                opacity: hover.hovered ? 1 : 0
+                visible: opacity > 0
+                Behavior on opacity {
+                    NumberAnimation { duration: Motion.fast; easing.type: Easing.OutCubic }
+                }
+
+                // Backing plate, so the icons stay legible over any page.
+                // A sibling of the Row, not a child: Row refuses to lay out
+                // anything that anchors itself.
+                Squircle {
+                    anchors.fill: parent
+                    radius: Tokens.radiusSmall
+                    fillColor: Tokens.surfaceElevated
+                    strokeColor: Tokens.separator
+                    strokeWidth: 1
+                }
+
+                Row {
+                    id: actionRow
+                    anchors.centerIn: parent
+                    spacing: 1
+
+                LumenIconButton {
+                    iconPath: Icons.rotateLeft
+                    tooltip: qsTr("Rotate left")
+                    implicitWidth: 26
+                    implicitHeight: 26
+                    onClicked: Document.pages.rotate(index, -1)
+                }
+
+                LumenIconButton {
+                    iconPath: Icons.rotateRight
+                    tooltip: qsTr("Rotate right")
+                    implicitWidth: 26
+                    implicitHeight: 26
+                    onClicked: Document.pages.rotate(index, 1)
+                }
+
+                LumenIconButton {
+                    iconPath: Icons.trash
+                    tooltip: qsTr("Delete page")
+                    implicitWidth: 26
+                    implicitHeight: 26
+                    enabled: Document.pageCount > 1
+                    onClicked: Document.pages.remove(index)
+                }
+                }
+            }
         }
     }
 }

@@ -15,6 +15,7 @@
 #include <fpdf_annot.h>
 #include <fpdf_doc.h>
 #include <fpdf_edit.h>
+#include <fpdf_ppo.h>
 #include <fpdf_save.h>
 #include <fpdf_text.h>
 #include <fpdfview.h>
@@ -975,6 +976,223 @@ bool PdfDocument::removeAnnotation(int pageIndex, int annotationIndex)
     FPDF_ClosePage(page);
     return ok;
 #else
+    return false;
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// Page operations
+// ---------------------------------------------------------------------------
+
+void PdfDocument::rebuildPageInfo()
+{
+    // Caller holds m_mutex.
+    m_pages.clear();
+
+#ifdef LUMEN_HAS_PDFIUM
+    if (!m_handle)
+        return;
+
+    auto doc = static_cast<FPDF_DOCUMENT>(m_handle);
+    const int count = FPDF_GetPageCount(doc);
+    m_pages.reserve(count);
+
+    for (int i = 0; i < count; ++i) {
+        FS_SIZEF size {};
+        if (FPDF_GetPageSizeByIndexF(doc, i, &size))
+            m_pages.append(PageInfo { QSizeF(size.width, size.height), 0 });
+        else
+            m_pages.append(PageInfo { kFallbackPageSize, 0 });
+    }
+#endif
+}
+
+QSharedPointer<PdfDocument> PdfDocument::createScratch()
+{
+    auto scratch = QSharedPointer<PdfDocument>::create();
+
+#ifdef LUMEN_HAS_PDFIUM
+    FPDF_DOCUMENT doc = FPDF_CreateNewDocument();
+    if (!doc)
+        return scratch;
+
+    scratch->m_handle = doc;
+    scratch->m_valid = true;
+#endif
+
+    return scratch;
+}
+
+int PdfDocument::pageRotation(int pageIndex) const
+{
+    if (!m_valid || pageIndex < 0 || pageIndex >= m_pages.size())
+        return 0;
+
+#ifdef LUMEN_HAS_PDFIUM
+    QMutexLocker locker(&m_mutex);
+    if (!m_handle)
+        return 0;
+
+    FPDF_PAGE page = FPDF_LoadPage(static_cast<FPDF_DOCUMENT>(m_handle), pageIndex);
+    if (!page)
+        return 0;
+
+    const int rotation = FPDFPage_GetRotation(page) * 90;
+    FPDF_ClosePage(page);
+    return rotation;
+#else
+    return 0;
+#endif
+}
+
+bool PdfDocument::rotatePage(int pageIndex, int quarterTurns)
+{
+    if (!m_valid || pageIndex < 0 || pageIndex >= m_pages.size())
+        return false;
+
+#ifdef LUMEN_HAS_PDFIUM
+    QMutexLocker locker(&m_mutex);
+    if (!m_handle)
+        return false;
+
+    invalidatePage(pageIndex);
+
+    FPDF_PAGE page = FPDF_LoadPage(static_cast<FPDF_DOCUMENT>(m_handle), pageIndex);
+    if (!page)
+        return false;
+
+    // PDFium counts rotation in quarter turns, 0..3. Normalise into range so
+    // negative deltas (rotate left) work without special-casing.
+    const int current = FPDFPage_GetRotation(page);
+    const int next = ((current + quarterTurns) % 4 + 4) % 4;
+    FPDFPage_SetRotation(page, next);
+
+    FPDFPage_GenerateContent(page);
+    FPDF_ClosePage(page);
+
+    // Rotating swaps width and height as far as everything downstream is
+    // concerned, so the cached geometry is now wrong.
+    rebuildPageInfo();
+
+    m_modified = true;
+    return true;
+#else
+    Q_UNUSED(quarterTurns)
+    return false;
+#endif
+}
+
+bool PdfDocument::movePage(int from, int to)
+{
+    if (!m_valid || from == to)
+        return false;
+    if (from < 0 || from >= m_pages.size() || to < 0 || to >= m_pages.size())
+        return false;
+
+#ifdef LUMEN_HAS_PDFIUM
+    QMutexLocker locker(&m_mutex);
+    if (!m_handle)
+        return false;
+
+    releaseTextCache();
+
+    const int index = from;
+    if (!FPDF_MovePages(static_cast<FPDF_DOCUMENT>(m_handle), &index, 1, to))
+        return false;
+
+    rebuildPageInfo();
+    buildOutline();   // outline destinations are page indices
+
+    m_modified = true;
+    return true;
+#else
+    return false;
+#endif
+}
+
+bool PdfDocument::deletePage(int pageIndex, PdfDocument *removedInto, int *stashIndex)
+{
+    if (!m_valid || pageIndex < 0 || pageIndex >= m_pages.size())
+        return false;
+
+    // Refusing to empty the document entirely: a zero-page PDF is invalid, and
+    // the user almost certainly meant to close the file instead.
+    if (m_pages.size() <= 1)
+        return false;
+
+#ifdef LUMEN_HAS_PDFIUM
+    QMutexLocker locker(&m_mutex);
+    if (!m_handle)
+        return false;
+
+    releaseTextCache();
+
+    // Copy the page somewhere safe first, so this can be undone. PDFium has no
+    // undo of its own -- the stash *is* the undo buffer.
+    if (removedInto && removedInto->m_handle) {
+        QMutexLocker stashLock(&removedInto->m_mutex);
+
+        auto stashDoc = static_cast<FPDF_DOCUMENT>(removedInto->m_handle);
+        const int before = FPDF_GetPageCount(stashDoc);
+
+        const QByteArray range = QByteArray::number(pageIndex + 1);   // 1-based
+        if (FPDF_ImportPages(stashDoc,
+                             static_cast<FPDF_DOCUMENT>(m_handle),
+                             range.constData(),
+                             before)) {
+            if (stashIndex)
+                *stashIndex = before;
+        } else if (stashIndex) {
+            *stashIndex = -1;
+        }
+    } else if (stashIndex) {
+        *stashIndex = -1;
+    }
+
+    FPDFPage_Delete(static_cast<FPDF_DOCUMENT>(m_handle), pageIndex);
+
+    rebuildPageInfo();
+    buildOutline();
+
+    m_modified = true;
+    return true;
+#else
+    Q_UNUSED(removedInto)
+    Q_UNUSED(stashIndex)
+    return false;
+#endif
+}
+
+bool PdfDocument::insertPageFrom(const PdfDocument &source, int sourceIndex, int atIndex)
+{
+    if (!m_valid || sourceIndex < 0)
+        return false;
+
+#ifdef LUMEN_HAS_PDFIUM
+    QMutexLocker locker(&m_mutex);
+    if (!m_handle || !source.m_handle)
+        return false;
+
+    releaseTextCache();
+
+    const QByteArray range = QByteArray::number(sourceIndex + 1);   // 1-based
+    const int target = qBound(0, atIndex, m_pages.size());
+
+    if (!FPDF_ImportPages(static_cast<FPDF_DOCUMENT>(m_handle),
+                          static_cast<FPDF_DOCUMENT>(source.m_handle),
+                          range.constData(),
+                          target)) {
+        return false;
+    }
+
+    rebuildPageInfo();
+    buildOutline();
+
+    m_modified = true;
+    return true;
+#else
+    Q_UNUSED(source)
+    Q_UNUSED(atIndex)
     return false;
 #endif
 }

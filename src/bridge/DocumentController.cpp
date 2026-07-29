@@ -20,7 +20,28 @@ DocumentController::DocumentController(QObject *parent)
     , m_search(new SearchController(this))
     , m_selection(new SelectionController(this))
     , m_annotate(new AnnotationController(m_selection, this))
+    , m_pageOps(new PageOperations(this))
 {
+    // Reordering, rotating or deleting a page changes both the page list and
+    // every rendered raster, so the models are reset and the whole cache is
+    // dropped. Selection and search results refer to page indices that may no
+    // longer mean the same thing, so they are cleared rather than migrated --
+    // silently pointing at the wrong page would be worse than losing them.
+    connect(m_pageOps, &PageOperations::structureChanged, this, [this] {
+        if (m_provider)
+            m_provider->clearCache();
+
+        m_selection->clear();
+        m_search->clear();
+        m_pageModel->setDocument(m_document);
+        m_outlineModel->setDocument(m_document);
+
+        ++m_renderGeneration;
+        emit renderGenerationChanged();
+        emit documentChanged();
+        emit modifiedChanged();
+    });
+
     connect(m_annotate, &AnnotationController::pageInvalidated,
             this, [this](int) {
                 // Page rasters are cached per (page, width); an edit makes all
@@ -118,6 +139,7 @@ void DocumentController::adoptDocument(const QSharedPointer<PdfDocument> &docume
     m_search->setDocument(m_document);
     m_selection->setDocument(m_document);
     m_annotate->setDocument(m_document);
+    m_pageOps->setDocument(m_document);
 
     if (m_document && m_document->isValid()) {
         m_filePath = m_document->filePath();

@@ -5,6 +5,7 @@
 #include "bridge/AnnotationController.h"
 #include "bridge/OutlineModel.h"
 #include "bridge/SearchController.h"
+#include "bridge/PageOperations.h"
 #include "bridge/SelectionController.h"
 
 #include <QAbstractItemModel>
@@ -36,6 +37,7 @@ class DocumentController : public QObject {
     Q_PROPERTY(lumen::SearchController *search READ search CONSTANT)
     Q_PROPERTY(lumen::SelectionController *selection READ selection CONSTANT)
     Q_PROPERTY(lumen::AnnotationController *annotate READ annotate CONSTANT)
+    Q_PROPERTY(lumen::PageOperations *pages READ pages CONSTANT)
 
     Q_PROPERTY(bool modified READ isModified NOTIFY modifiedChanged)
 
@@ -73,6 +75,7 @@ public:
     SearchController *search() const { return m_search; }
     SelectionController *selection() const { return m_selection; }
     AnnotationController *annotate() const { return m_annotate; }
+    PageOperations *pages() const { return m_pageOps; }
 
     bool isModified() const;
     int renderGeneration() const { return m_renderGeneration; }
@@ -113,6 +116,7 @@ private:
     SearchController *m_search = nullptr;
     SelectionController *m_selection = nullptr;
     AnnotationController *m_annotate = nullptr;
+    PageOperations *m_pageOps = nullptr;
 
     int m_renderGeneration = 0;
 };

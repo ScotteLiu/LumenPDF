@@ -38,6 +38,12 @@ QtObject {
     readonly property string strikeout: "M7 5.5A3.5 3.5 0 0 1 10.5 3h3a3.5 3.5 0 0 1 3.4 2.7 M4 12h16 M17 15a3.5 3.5 0 0 1-3.5 3.5h-3A3.5 3.5 0 0 1 7 15"
     readonly property string save:      "M5 3h11l3 3v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z M8 3v5h7 M8 21v-6h8v6"
 
+    readonly property string rotateLeft:  "M4 8h9a6 6 0 1 1 0 12H8 M4 8l4-4 M4 8l4 4"
+    readonly property string rotateRight: "M20 8h-9a6 6 0 1 0 0 12h5 M20 8l-4-4 M20 8l-4 4"
+    readonly property string trash:       "M4 7h16 M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2 M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12 M10 11v6 M14 11v6"
+    readonly property string undo:        "M4 9h11a5 5 0 0 1 0 10H9 M4 9l4-4 M4 9l4 4"
+    readonly property string redo:        "M20 9H9a5 5 0 0 0 0 10h6 M20 9l-4-4 M20 9l-4 4"
+
     readonly property string thumbnails:   "M4 4h6v6H4z M14 4h6v6h-6z M4 14h6v6H4z M14 14h6v6h-6z"
     readonly property string outline:      "M4 6h3 M10 6h10 M4 12h3 M10 12h10 M4 18h3 M10 18h10"
 }
