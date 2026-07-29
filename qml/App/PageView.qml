@@ -19,7 +19,11 @@ Item {
     id: root
 
     property real zoom: 1.0
-    readonly property int currentPage: pageList.currentIndex
+
+    // The page the reader is actually looking at, not ListView.currentIndex --
+    // that only moves on keyboard navigation and would stay at 0 forever while
+    // scrolling with the wheel.
+    property int currentPage: 0
 
     readonly property real minZoom: 0.15
     readonly property real maxZoom: 8.0
@@ -27,6 +31,18 @@ Item {
     // Quantising to 128px buckets means a smooth zoom re-renders a handful of
     // times instead of once per frame, and cache hits survive small resizes.
     readonly property int _renderBucket: 128
+
+    // rectsForPage() is a plain function call, so QML cannot know when its
+    // answer changes. Bumping this counter is what re-evaluates the highlight
+    // Repeaters -- cheaper and far more predictable than exposing one list
+    // property per page.
+    property int _highlightGeneration: 0
+
+    Connections {
+        target: Document.search
+        function onCountChanged() { root._highlightGeneration++ }
+        function onCurrentIndexChanged() { root._highlightGeneration++ }
+    }
 
     function zoomBy(factor) {
         zoom = Math.max(minZoom, Math.min(maxZoom, zoom * factor));
@@ -36,14 +52,42 @@ Item {
         if (pageList.count === 0)
             return;
         const available = root.width - Tokens.space6 * 2;
-        const pointsWide = Document.pageWidthPoints(pageList.currentIndex);
+        const pointsWide = Document.pageWidthPoints(root.currentPage);
         if (pointsWide > 0)
             zoom = available / (pointsWide * 96 / 72);
     }
 
+    // Scrolls to a page with an eased motion rather than teleporting.
+    //
+    // positionViewAtIndex is the only reliable way to find the target offset
+    // (delegate heights vary), so: jump, read the resulting contentY, snap
+    // back, and animate to it.
     function goToPage(index) {
+        if (index < 0 || index >= pageList.count)
+            return;
+
+        const from = pageList.contentY;
         pageList.positionViewAtIndex(index, ListView.Beginning);
-        pageList.currentIndex = index;
+        const to = pageList.contentY - pageList.topMargin;
+
+        root.currentPage = index;
+
+        if (Math.abs(to - from) < 2)
+            return;
+
+        pageList.contentY = from;
+        scrollTo.from = from;
+        scrollTo.to = to;
+        scrollTo.restart();
+    }
+
+    NumberAnimation {
+        id: scrollTo
+        target: pageList
+        property: "contentY"
+        duration: Motion.normal
+        easing.type: Easing.Bezier
+        easing.bezierCurve: Motion.standard
     }
 
     Rectangle {
@@ -71,6 +115,21 @@ Item {
         maximumFlickVelocity: 6000
 
         ScrollBar.vertical: LumenScrollBar {}
+
+        // Which page counts as "current": the one under a point slightly
+        // above centre, which is where the eye sits when reading.
+        onContentYChanged: currentPageTick.restart()
+
+        Timer {
+            id: currentPageTick
+            interval: 60      // coalesce: contentY changes every frame
+            onTriggered: {
+                const probeY = pageList.contentY + pageList.height * 0.35;
+                const index = pageList.indexAt(pageList.width / 2, probeY);
+                if (index >= 0)
+                    root.currentPage = index;
+            }
+        }
 
         delegate: Item {
             id: pageSlot
@@ -117,6 +176,69 @@ Item {
                         NumberAnimation {
                             duration: Motion.normal
                             easing.type: Easing.OutCubic
+                        }
+                    }
+                }
+
+                // -- Search highlights ------------------------------------
+                //
+                // Rebuilt whenever the result set or the selection changes.
+                // Rectangles arrive in PDF points with a top-left origin, so
+                // the only transform needed is the points-to-pixels scale.
+                Repeater {
+                    model: root._highlightGeneration >= 0
+                           ? Document.search.rectsForPage(pageSlot.index)
+                           : []
+
+                    delegate: Rectangle {
+                        required property var modelData
+
+                        // Not named `scale`: that is an existing writable
+                        // Item property, and shadowing it makes the whole
+                        // component fail to load.
+                        readonly property real pointScale:
+                            pageSlot.pageWidth / pageSlot.widthPoints
+
+                        x: modelData.x * pointScale
+                        y: modelData.y * pointScale
+                        width: modelData.width * pointScale
+                        height: modelData.height * pointScale
+
+                        color: Tokens.accent
+                        opacity: 0.22
+                        radius: 2
+                    }
+                }
+
+                // The selected match, drawn on top and much stronger.
+                Repeater {
+                    model: root._highlightGeneration >= 0
+                           ? Document.search.currentRectsForPage(pageSlot.index)
+                           : []
+
+                    delegate: Rectangle {
+                        required property var modelData
+
+                        readonly property real pointScale:
+                            pageSlot.pageWidth / pageSlot.widthPoints
+
+                        x: modelData.x * pointScale
+                        y: modelData.y * pointScale
+                        width: modelData.width * pointScale
+                        height: modelData.height * pointScale
+
+                        color: Tokens.accent
+                        opacity: 0.42
+                        radius: 2
+
+                        transformOrigin: Item.Center
+
+                        // A single pulse on selection, so the eye finds the
+                        // match immediately after a jump between pages.
+                        SequentialAnimation on scale {
+                            running: true
+                            NumberAnimation { from: 1.0; to: 1.18; duration: 130; easing.type: Easing.OutCubic }
+                            NumberAnimation { to: 1.0; duration: 200; easing.type: Easing.OutCubic }
                         }
                     }
                 }

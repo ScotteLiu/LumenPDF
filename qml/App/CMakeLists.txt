@@ -6,6 +6,8 @@ qt_add_qml_module(App
         Main.qml
         PageView.qml
         ThumbnailRail.qml
+        OutlinePanel.qml
+        SearchPanel.qml
         EmptyState.qml
 )
 

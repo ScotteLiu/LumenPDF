@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/PdfTypes.h"
+
 #include <QImage>
 #include <QMutex>
 #include <QSizeF>
@@ -41,7 +43,22 @@ public:
     // Returns a null QImage on failure.
     QImage renderPage(int index, const QSize &pixelSize) const;
 
+    // Document outline, flattened depth-first. Built once at load time.
+    const QVector<OutlineItem> &outline() const { return m_outline; }
+
+    // Full extracted text of one page. Thread-safe.
+    QString pageText(int index) const;
+
+    // Every match of `query` on one page. Thread-safe, and the unit of work
+    // the search runs in -- one page per task keeps results streaming in
+    // rather than arriving all at once at the end.
+    QVector<SearchHit> searchPage(int index,
+                                  const QString &query,
+                                  bool matchCase,
+                                  bool wholeWord) const;
+
 private:
+    void buildOutline();
     QImage renderPlaceholder(int index, const QSize &pixelSize) const;
 
     mutable QMutex m_mutex;
@@ -50,6 +67,7 @@ private:
     QString m_filePath;
     QString m_lastError;
     QVector<PageInfo> m_pages;
+    QVector<OutlineItem> m_outline;
 };
 
 } // namespace lumen

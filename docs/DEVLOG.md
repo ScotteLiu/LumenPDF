@@ -5,6 +5,94 @@
 
 ---
 
+## 2026-07-30 — 全文搜尋與大綱側欄
+
+### 實測數字
+
+| 項目 | 結果 |
+|---|---|
+| 搜尋 245 頁、1028 個命中 | **130 ms** |
+| 開啟 245 頁文件 + 建立 214 筆大綱 | 瞬間（無感） |
+| 6 頁論文搜尋 197 個命中 | 無感 |
+
+### 架構
+
+**搜尋**：`SearchController` 同時是結果模型也是控制器。QML 需要的正是這個形狀——
+一個可綁定的 list，加上驅動它的屬性和動詞。
+
+用 `QtConcurrent::mapped` + `QFutureWatcher::resultReadyAt` 而非
+`QtConcurrent::run`：**同時拿到平行度與順序**。`mapped` 會保持索引順序並在每個結果
+到位時通知，所以第 2 頁的命中不可能排在第 900 頁後面，但頁面本身是併發掃描的。
+結果邊掃邊進場，掃描還沒結束就已經能用。
+
+輸入有 180 ms debounce——打「annotation」應該跑一次搜尋，不是十次。
+
+**誠實的限制**：`PdfDocument` 對 PDFium 呼叫加了 mutex（FPDF_DOCUMENT 本身非
+執行緒安全），所以實際上 PDFium 的部分是序列化的，平行度目前沒有真的發揮。
+130 ms 的數字下不值得處理；文件再大一個量級時要改成每執行緒各開一份
+document handle。
+
+**大綱**：扁平陣列 + depth 欄位，不是真的樹。QML 端本來就只吃線性模型，
+展開／收合就是同一個陣列上的可見性過濾。可見性計算是單次前向掃描
+（`ancestorOpen[d]` 記住深度 d 最近一個項目是否展開），O(items × depth)
+而非反向找祖先的 O(items²)——大綱動輒數千列。
+
+書籤走訪用顯式堆疊而非遞迴，並用 `QSet` 斷開環：這是在處理不受信任的輸入，
+惡意檔案可以做出無限深或循環的書籤樹。
+
+### 踩到的坑
+
+**1. `Qt6Concurrent.dll` 沒被部署 —— 0xC0000135，零輸出**
+
+App 啟動即死，exit code `-1073741515`，log 一個字都沒有。
+原因：`QtConcurrent::run` 是 header-only，不產生 DLL 依賴；改用
+`QtConcurrent::mapped` 之後才第一次真的依賴 `Qt6Concurrent.dll`，
+而 windeployqt 是上一版跑的。
+
+**修法不只是補跑一次**——把 windeployqt 併進 `scripts/build.ps1`，每次建置都跑。
+這類 bug 沒有任何診斷訊息，不該讓它有第二次機會。
+
+**2. 關閉時 access violation（0xC0000005）**
+
+`PdfEngine::shutdown()`（`FPDF_DestroyLibrary`）在 `QQmlApplicationEngine` 解構
+**之前**執行 → 文件的解構子在函式庫已銷毀後才呼叫 `FPDF_CloseDocument`。
+修法：把 engine 包進一個 scope，離開 scope 後才 shutdown。
+
+**3. QML 屬性遮蔽**
+
+- delegate 裡宣告 `readonly property real scale` → 遮蔽 `Item.scale`，
+  整個 component 載入失敗（`"scale" is a read-only property`）。改名 `pointScale`。
+- `LumenIconButton` 宣告 `property string icon` → `Cannot override FINAL property`，
+  `AbstractButton` 已有 FINAL 的 `icon` group。改名 `iconPath`。
+
+**4. PowerShell `Set-Content -Encoding utf8` 會毀掉非 ASCII 原始碼**
+
+用它做正規表示式取代時，把連字字元 `ﬀﬁﬂ` 全部寫成 mojibake，而且壞掉的位元組
+之後連編輯工具都無法比對。**教訓：原始碼一律用編輯工具改，不要用 shell 做取代。**
+連字表現在寫成明確碼位（`0xFB00`）而非字元字面值——原始碼不該依賴自己的編碼
+能存活過每一個經手的工具。
+
+### 品質細節
+
+- **字型解析**：`Inter` 沒安裝時不該掉到襯線預設字型。啟動時從
+  per-platform 偏好清單挑一個實際存在的（Inter → Segoe UI Variable → Segoe UI），
+  解析一次，所有元件透過 `Tokens.fontFamily` 取用。
+- **片段清理**：排版 PDF 充滿連字碼位、軟連字號、零寬字元——在頁面上是對的，
+  在結果清單裡是一堆豆腐方塊。顯示前展開連字、移除不可見控制字元。
+  偏移量因此會變，所以是把「match 前／match／match 後」三段分別處理再重算偏移。
+- **片段切齊單字邊界**：結果不再從半個音節開始（`mbedded real-time systems`）。
+- **搜尋高亮**：全部命中畫淡色，當前命中畫濃色並做一次彈跳脈衝——
+  跨頁跳轉後眼睛能立刻找到。
+- **`LumenSegmented`**：選取指示器是**滑動**過去而不是在新分頁下方重新出現。
+  眼睛追蹤的是一個移動的物體，不是兩個閃爍的物體。
+
+### 測試鉤子
+
+`LUMEN_SIDEBAR_TAB` 與 `LUMEN_SEARCH` 環境變數讓截圖與煙霧測試能到達任一面板、
+觸發任一狀態，完全不需要合成輸入事件。
+
+---
+
 ## 2026-07-30 — 建立專案骨架
 
 ### 環境建置

@@ -1,4 +1,6 @@
 #include "bridge/DocumentController.h"
+#include "bridge/OutlineModel.h"
+#include "bridge/SearchController.h"
 #include "core/PdfEngine.h"
 #include "platform/PlatformWindow.h"
 #include "render/PageImageProvider.h"
@@ -73,6 +75,14 @@ int main(int argc, char *argv[])
 
     lumen::PdfEngine::initialize();
 
+    QGuiApplication::setFont(lumen::PlatformWindow::preferredUiFont());
+
+    // Scoped so the engine -- and with it every open document and every
+    // worker thread holding one -- is destroyed *before* PDFium is torn down.
+    // Getting this backwards means FPDF_CloseDocument runs after
+    // FPDF_DestroyLibrary, which is an access violation on exit.
+    int result = 0;
+    {
     QQmlApplicationEngine engine;
 
     // The engine takes ownership of the provider.
@@ -90,6 +100,15 @@ int main(int argc, char *argv[])
         "Lumen.Backend", 1, 0, "DocumentStatus",
         QStringLiteral("Use Document.status"));
 
+    // Registered so QML can read their enums and use them as property types;
+    // both are owned by the controller and never constructed from QML.
+    qmlRegisterUncreatableType<lumen::SearchController>(
+        "Lumen.Backend", 1, 0, "SearchStatus",
+        QStringLiteral("Use Document.search"));
+    qmlRegisterUncreatableType<lumen::OutlineModel>(
+        "Lumen.Backend", 1, 0, "Outline",
+        QStringLiteral("Use Document.outline"));
+
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed,
                      &app, []() { QCoreApplication::exit(-1); },
                      Qt::QueuedConnection);
@@ -101,9 +120,21 @@ int main(int argc, char *argv[])
     if (args.size() > 1)
         controller->open(QUrl::fromLocalFile(args.at(1)));
 
+    // Drive a search from the environment, so capture runs and smoke tests can
+    // exercise the results path without synthesising input events.
+    if (qEnvironmentVariableIsSet("LUMEN_SEARCH")) {
+        const QString query = qEnvironmentVariable("LUMEN_SEARCH");
+        QObject::connect(controller, &lumen::DocumentController::documentChanged,
+                         controller, [controller, query] {
+                             if (controller->pageCount() > 0)
+                                 controller->search()->setQuery(query);
+                         });
+    }
+
     installCaptureHook(engine);
 
-    const int result = app.exec();
+    result = app.exec();
+    }
 
     lumen::PdfEngine::shutdown();
     return result;

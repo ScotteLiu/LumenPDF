@@ -24,7 +24,11 @@ param(
     [ValidateSet("release", "debug")]
     [string]$Config = "release",
 
-    [switch]$Fresh
+    [switch]$Fresh,
+
+    # Skip the Qt runtime deployment step. Only useful when iterating on a
+    # C++-only change and every second counts.
+    [switch]$NoDeploy
 )
 
 $ErrorActionPreference = "Stop"
@@ -93,6 +97,31 @@ Write-Host ""
 Write-Host "--- build ($preset) ---" -ForegroundColor Cyan
 cmake --build --preset $preset
 if ($LASTEXITCODE -ne 0) { throw "Build failed" }
+
+# -- Deploy the Qt runtime --------------------------------------------------
+#
+# Always, not just on first build. windeployqt works from the exe's actual
+# imports, and those change as the code changes: adding QtConcurrent::mapped
+# introduced a real dependency on Qt6Concurrent.dll where QtConcurrent::run
+# (header-only) had introduced none. The app then died at startup with
+# 0xC0000135 and no output at all, which is a miserable thing to debug.
+if (-not $NoDeploy) {
+    $windeployqt = Join-Path $qtRoot "bin\windeployqt.exe"
+    if (Test-Path $windeployqt) {
+        Write-Host ""
+        Write-Host "--- deploy ---" -ForegroundColor Cyan
+        $deployFlag = if ($Config -eq "debug") { "--debug" } else { "--release" }
+        & $windeployqt $deployFlag `
+            --qmldir (Join-Path $repoRoot "qml") `
+            --no-translations `
+            --no-system-d3d-compiler `
+            (Join-Path $buildDir "lumenpdf.exe") | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "windeployqt failed" }
+        Write-Host "Qt runtime deployed"
+    } else {
+        Write-Warning "windeployqt not found at $windeployqt -- skipping deployment"
+    }
+}
 
 Write-Host ""
 Write-Host "Built: $buildDir\lumenpdf.exe" -ForegroundColor Green

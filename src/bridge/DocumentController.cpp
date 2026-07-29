@@ -1,6 +1,8 @@
 #include "bridge/DocumentController.h"
 
+#include "bridge/OutlineModel.h"
 #include "bridge/PageListModel.h"
+#include "bridge/SearchController.h"
 #include "core/PdfDocument.h"
 #include "render/PageImageProvider.h"
 
@@ -13,6 +15,8 @@ namespace lumen {
 DocumentController::DocumentController(QObject *parent)
     : QObject(parent)
     , m_pageModel(new PageListModel(this))
+    , m_outlineModel(new OutlineModel(this))
+    , m_search(new SearchController(this))
 {
 }
 
@@ -31,6 +35,11 @@ int DocumentController::pageCount() const
 QAbstractItemModel *DocumentController::pageModel() const
 {
     return m_pageModel;
+}
+
+QAbstractItemModel *DocumentController::outlineModelAsItemModel() const
+{
+    return m_outlineModel;
 }
 
 double DocumentController::pageWidthPoints(int index) const
@@ -90,6 +99,8 @@ void DocumentController::adoptDocument(const QSharedPointer<PdfDocument> &docume
         m_provider->setDocument(m_document);
 
     m_pageModel->setDocument(m_document);
+    m_outlineModel->setDocument(m_document);
+    m_search->setDocument(m_document);
 
     if (m_document && m_document->isValid()) {
         m_filePath = m_document->filePath();

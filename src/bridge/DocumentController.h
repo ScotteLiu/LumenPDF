@@ -1,5 +1,10 @@
 #pragma once
 
+// Full definitions, not forward declarations: moc needs complete types for any
+// class used as a Q_PROPERTY pointer.
+#include "bridge/OutlineModel.h"
+#include "bridge/SearchController.h"
+
 #include <QAbstractItemModel>
 #include <QObject>
 #include <QSharedPointer>
@@ -24,6 +29,9 @@ class DocumentController : public QObject {
     // Typed as QAbstractItemModel* rather than QObject* so QML views accept it
     // directly as a `model`.
     Q_PROPERTY(QAbstractItemModel *pageModel READ pageModel CONSTANT)
+    Q_PROPERTY(QAbstractItemModel *outlineModel READ outlineModelAsItemModel CONSTANT)
+    Q_PROPERTY(lumen::OutlineModel *outline READ outlineModel CONSTANT)
+    Q_PROPERTY(lumen::SearchController *search READ search CONSTANT)
 
 public:
     // Unscoped on purpose: QML reads these as DocumentStatus.Ready etc.
@@ -48,6 +56,9 @@ public:
     int pageCount() const;
     QString errorString() const { return m_errorString; }
     QAbstractItemModel *pageModel() const;
+    OutlineModel *outlineModel() const { return m_outlineModel; }
+    QAbstractItemModel *outlineModelAsItemModel() const;
+    SearchController *search() const { return m_search; }
 
     Q_INVOKABLE void open(const QUrl &url);
     Q_INVOKABLE void close();
@@ -71,6 +82,8 @@ private:
     QSharedPointer<PdfDocument> m_document;
     PageImageProvider *m_provider = nullptr;
     PageListModel *m_pageModel = nullptr;
+    OutlineModel *m_outlineModel = nullptr;
+    SearchController *m_search = nullptr;
 };
 
 } // namespace lumen

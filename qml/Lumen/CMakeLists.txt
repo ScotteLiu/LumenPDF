@@ -24,6 +24,7 @@ qt_add_qml_module(Lumen
         LumenScrollBar.qml
         LumenSearchField.qml
         LumenSeparator.qml
+        LumenSegmented.qml
 )
 
 target_link_libraries(Lumen PRIVATE Qt6::Quick)

@@ -29,7 +29,17 @@ ApplicationWindow {
     Shortcut { sequences: [StandardKey.ZoomIn]; onActivated: pageView.zoomBy(1.25) }
     Shortcut { sequences: [StandardKey.ZoomOut]; onActivated: pageView.zoomBy(0.8) }
     Shortcut { sequence: "Ctrl+0"; onActivated: pageView.fitWidth() }
-    Shortcut { sequence: "Ctrl+F"; onActivated: searchField.forceActiveFocus() }
+    Shortcut {
+        sequence: "Ctrl+F"
+        onActivated: {
+            sidebar.expanded = true;
+            sidebar.tab = 2;
+            searchField.forceActiveFocus();
+            searchField.selectAll();
+        }
+    }
+    Shortcut { sequences: [StandardKey.FindNext]; onActivated: Document.search.next() }
+    Shortcut { sequences: [StandardKey.FindPrevious]; onActivated: Document.search.previous() }
     Shortcut { sequence: "Ctrl+Shift+D"; onActivated: Tokens.dark = !Tokens.dark }
 
     FileDialog {
@@ -129,6 +139,21 @@ ApplicationWindow {
             anchors.verticalCenter: parent.verticalCenter
             placeholder: qsTr("Search in document")
             enabled: Document.status === DocumentStatus.Ready
+
+            onTextChanged: Document.search.query = text
+
+            // Enter walks the results; Escape gets out of the way entirely.
+            Keys.onReturnPressed: (event) => {
+                if (event.modifiers & Qt.ShiftModifier)
+                    Document.search.previous();
+                else
+                    Document.search.next();
+                event.accepted = true;
+            }
+            Keys.onEscapePressed: {
+                text = "";
+                focus = false;
+            }
         }
 
         LumenIconButton {
@@ -144,12 +169,76 @@ ApplicationWindow {
         anchors.top: toolbar.bottom
         anchors.left: parent.left
         anchors.bottom: parent.bottom
-        expanded: false
+        expanded: true
 
-        ThumbnailRail {
-            anchors.fill: parent
-            currentIndex: pageView.currentPage
-            onPageRequested: (index) => pageView.goToPage(index)
+        // 0 = thumbnails, 1 = outline, 2 = search results
+        property int tab: Platform.initialSidebarTab >= 0
+                          ? Platform.initialSidebarTab : 0
+
+        LumenSegmented {
+            id: sidebarTabs
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.margins: Tokens.space3
+            options: [qsTr("Pages"), qsTr("Outline"), qsTr("Search")]
+            currentIndex: sidebar.tab
+            onSelected: (index) => sidebar.tab = index
+        }
+
+        // Panels are stacked and cross-faded rather than reloaded: switching
+        // tabs must not throw away thumbnail renders or search results.
+        Item {
+            anchors.top: sidebarTabs.bottom
+            anchors.topMargin: Tokens.space2
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+
+            ThumbnailRail {
+                anchors.fill: parent
+                currentIndex: pageView.currentPage
+                onPageRequested: (index) => pageView.goToPage(index)
+                opacity: sidebar.tab === 0 ? 1 : 0
+                visible: opacity > 0
+                Behavior on opacity { NumberAnimation { duration: Motion.fast } }
+            }
+
+            OutlinePanel {
+                anchors.fill: parent
+                currentPage: pageView.currentPage
+                onPageRequested: (index) => pageView.goToPage(index)
+                opacity: sidebar.tab === 1 ? 1 : 0
+                visible: opacity > 0
+                Behavior on opacity { NumberAnimation { duration: Motion.fast } }
+            }
+
+            SearchPanel {
+                anchors.fill: parent
+                opacity: sidebar.tab === 2 ? 1 : 0
+                visible: opacity > 0
+                Behavior on opacity { NumberAnimation { duration: Motion.fast } }
+            }
+        }
+    }
+
+    // Search drives navigation: selecting a match scrolls the page into view
+    // and opens the results panel so the reader can see where they are.
+    Connections {
+        target: Document.search
+
+        function onNavigateTo(pageIndex) {
+            pageView.goToPage(pageIndex);
+        }
+
+        // As soon as a search finds something, show it. Typing in the find
+        // field and having the results stay hidden behind a tab would be
+        // hostile.
+        function onCountChanged() {
+            if (Document.search.count > 0) {
+                sidebar.expanded = true;
+                sidebar.tab = 2;
+            }
         }
     }
 

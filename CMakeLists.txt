@@ -67,6 +67,7 @@ endif()
 qt_add_executable(lumenpdf
     src/app/main.cpp
 
+    src/core/PdfTypes.h
     src/core/PdfDocument.h
     src/core/PdfDocument.cpp
     src/core/PdfEngine.h
@@ -81,6 +82,10 @@ qt_add_executable(lumenpdf
     src/bridge/DocumentController.cpp
     src/bridge/PageListModel.h
     src/bridge/PageListModel.cpp
+    src/bridge/OutlineModel.h
+    src/bridge/OutlineModel.cpp
+    src/bridge/SearchController.h
+    src/bridge/SearchController.cpp
 
     src/platform/PlatformWindow.h
     src/platform/PlatformWindow.cpp

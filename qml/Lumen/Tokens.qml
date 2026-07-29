@@ -1,6 +1,7 @@
 pragma Singleton
 
 import QtQuick
+import Lumen.Backend
 
 // The single source of truth for every visual constant in the app.
 //
@@ -56,9 +57,11 @@ QtObject {
     readonly property real radiusXLarge: 22
 
     // -- Typography --------------------------------------------------------
-    // Inter is the redistributable stand-in for SF Pro; the system UI font is
-    // the fallback so the app still looks right before fonts are bundled.
-    readonly property string fontFamily: "Inter"
+    // Inter is the redistributable stand-in for SF Pro. The actual family is
+    // resolved once at startup from a per-platform preference list, so a
+    // machine without Inter falls back to the closest system grotesque
+    // instead of dropping to a serif default.
+    readonly property string fontFamily: Platform.uiFontFamily
     readonly property string monoFamily: "JetBrains Mono"
 
     readonly property int textCaption: 11
