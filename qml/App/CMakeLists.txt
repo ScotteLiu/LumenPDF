@@ -8,6 +8,7 @@ qt_add_qml_module(App
         ThumbnailRail.qml
         OutlinePanel.qml
         SearchPanel.qml
+        SelectionToolbar.qml
         EmptyState.qml
 )
 

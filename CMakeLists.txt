@@ -86,6 +86,10 @@ qt_add_executable(lumenpdf
     src/bridge/OutlineModel.cpp
     src/bridge/SearchController.h
     src/bridge/SearchController.cpp
+    src/bridge/SelectionController.h
+    src/bridge/SelectionController.cpp
+    src/bridge/AnnotationController.h
+    src/bridge/AnnotationController.cpp
 
     src/platform/PlatformWindow.h
     src/platform/PlatformWindow.cpp
@@ -114,6 +118,11 @@ endif()
 if(WIN32)
     target_link_libraries(lumenpdf PRIVATE dwmapi)
     set_target_properties(lumenpdf PROPERTIES WIN32_EXECUTABLE ON)
+
+    # windows.h defines min/max as macros, which breaks std::numeric_limits<T>::max()
+    # and std::min/std::max wherever it is pulled in -- and PDFium's headers pull
+    # it in. WIN32_LEAN_AND_MEAN also keeps the include cheap.
+    target_compile_definitions(lumenpdf PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
 
 # ---------------------------------------------------------------------------

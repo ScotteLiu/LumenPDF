@@ -2,15 +2,20 @@
 
 #include "core/PdfEngine.h"
 
+#include <QFile>
 #include <QFileInfo>
 #include <QLoggingCategory>
 #include <QMutexLocker>
 #include <QPainter>
 #include <QSet>
 
+#include <limits>
+
 #ifdef LUMEN_HAS_PDFIUM
+#include <fpdf_annot.h>
 #include <fpdf_doc.h>
 #include <fpdf_edit.h>
+#include <fpdf_save.h>
 #include <fpdf_text.h>
 #include <fpdfview.h>
 #endif
@@ -281,6 +286,9 @@ void PdfDocument::close()
 {
     QMutexLocker locker(&m_mutex);
 
+    // Before the document: these hold pages that belong to it.
+    releaseTextCache();
+
 #ifdef LUMEN_HAS_PDFIUM
     if (m_handle) {
         FPDF_CloseDocument(static_cast<FPDF_DOCUMENT>(m_handle));
@@ -520,6 +528,535 @@ QVector<SearchHit> PdfDocument::searchPage(int index,
 #endif
 
     return hits;
+}
+
+// ---------------------------------------------------------------------------
+// Text selection
+// ---------------------------------------------------------------------------
+
+void PdfDocument::releaseTextCache() const
+{
+    // Caller holds m_mutex.
+#ifdef LUMEN_HAS_PDFIUM
+    if (m_textCacheTextPage) {
+        FPDFText_ClosePage(static_cast<FPDF_TEXTPAGE>(m_textCacheTextPage));
+        m_textCacheTextPage = nullptr;
+    }
+    if (m_textCachePage) {
+        FPDF_ClosePage(static_cast<FPDF_PAGE>(m_textCachePage));
+        m_textCachePage = nullptr;
+    }
+#endif
+    m_textCacheIndex = -1;
+}
+
+void *PdfDocument::acquireTextPage(int pageIndex) const
+{
+    // Caller holds m_mutex.
+#ifdef LUMEN_HAS_PDFIUM
+    if (m_textCacheIndex == pageIndex && m_textCacheTextPage)
+        return m_textCacheTextPage;
+
+    releaseTextCache();
+
+    if (!m_handle)
+        return nullptr;
+
+    FPDF_PAGE page = FPDF_LoadPage(static_cast<FPDF_DOCUMENT>(m_handle), pageIndex);
+    if (!page)
+        return nullptr;
+
+    FPDF_TEXTPAGE textPage = FPDFText_LoadPage(page);
+    if (!textPage) {
+        FPDF_ClosePage(page);
+        return nullptr;
+    }
+
+    m_textCachePage = page;
+    m_textCacheTextPage = textPage;
+    m_textCacheIndex = pageIndex;
+    return textPage;
+#else
+    Q_UNUSED(pageIndex)
+    return nullptr;
+#endif
+}
+
+int PdfDocument::characterCount(int pageIndex) const
+{
+    if (!m_valid || pageIndex < 0 || pageIndex >= m_pages.size())
+        return 0;
+
+#ifdef LUMEN_HAS_PDFIUM
+    QMutexLocker locker(&m_mutex);
+    auto textPage = static_cast<FPDF_TEXTPAGE>(acquireTextPage(pageIndex));
+    return textPage ? FPDFText_CountChars(textPage) : 0;
+#else
+    return 0;
+#endif
+}
+
+int PdfDocument::characterAt(int pageIndex, const QPointF &point, double tolerance) const
+{
+    if (!m_valid || pageIndex < 0 || pageIndex >= m_pages.size())
+        return -1;
+
+#ifdef LUMEN_HAS_PDFIUM
+    QMutexLocker locker(&m_mutex);
+    auto textPage = static_cast<FPDF_TEXTPAGE>(acquireTextPage(pageIndex));
+    if (!textPage)
+        return -1;
+
+    // Back into PDFium's bottom-left user space.
+    const double pageHeight = m_pages.at(pageIndex).sizePoints.height();
+    return FPDFText_GetCharIndexAtPos(textPage,
+                                      point.x(),
+                                      pageHeight - point.y(),
+                                      tolerance,
+                                      tolerance);
+#else
+    Q_UNUSED(point)
+    Q_UNUSED(tolerance)
+    return -1;
+#endif
+}
+
+int PdfDocument::insertionPointAt(int pageIndex, const QPointF &point) const
+{
+    if (!m_valid || pageIndex < 0 || pageIndex >= m_pages.size())
+        return -1;
+
+#ifdef LUMEN_HAS_PDFIUM
+    QMutexLocker locker(&m_mutex);
+    auto textPage = static_cast<FPDF_TEXTPAGE>(acquireTextPage(pageIndex));
+    if (!textPage)
+        return -1;
+
+    const double pageHeight = m_pages.at(pageIndex).sizePoints.height();
+    const double userY = pageHeight - point.y();
+
+    // Direct hit first -- the common case, and exact.
+    const int direct = FPDFText_GetCharIndexAtPos(textPage, point.x(), userY, 4.0, 4.0);
+    if (direct >= 0)
+        return direct;
+
+    // Otherwise find the nearest character. A drag spends much of its time in
+    // the whitespace between words and past the end of a line, and selection
+    // has to keep working there.
+    const int count = FPDFText_CountChars(textPage);
+    if (count <= 0)
+        return -1;
+
+    int best = -1;
+    double bestScore = std::numeric_limits<double>::max();
+
+    for (int i = 0; i < count; ++i) {
+        double left = 0, right = 0, bottom = 0, top = 0;
+        if (!FPDFText_GetCharBox(textPage, i, &left, &right, &bottom, &top))
+            continue;
+
+        const double centreY = (top + bottom) / 2.0;
+        const double halfHeight = qMax(1.0, (top - bottom) / 2.0);
+
+        // Vertical distance dominates: the character on the pointer's line is
+        // always a better answer than a closer one on the line above.
+        const double dy = qAbs(userY - centreY) / halfHeight;
+        const double dx = (point.x() < left)  ? (left - point.x())
+                        : (point.x() > right) ? (point.x() - right)
+                                              : 0.0;
+
+        const double score = dy * 1000.0 + dx;
+        if (score < bestScore) {
+            bestScore = score;
+            best = i;
+        }
+    }
+
+    return best;
+#else
+    Q_UNUSED(point)
+    return -1;
+#endif
+}
+
+QVector<QRectF> PdfDocument::rectsForRange(int pageIndex, int start, int count) const
+{
+    QVector<QRectF> rects;
+    if (!m_valid || count <= 0 || pageIndex < 0 || pageIndex >= m_pages.size())
+        return rects;
+
+#ifdef LUMEN_HAS_PDFIUM
+    QMutexLocker locker(&m_mutex);
+    auto textPage = static_cast<FPDF_TEXTPAGE>(acquireTextPage(pageIndex));
+    if (!textPage)
+        return rects;
+
+    const double pageHeight = m_pages.at(pageIndex).sizePoints.height();
+    const int rectCount = FPDFText_CountRects(textPage, start, count);
+    rects.reserve(rectCount);
+
+    for (int i = 0; i < rectCount; ++i) {
+        double left = 0, top = 0, right = 0, bottom = 0;
+        if (!FPDFText_GetRect(textPage, i, &left, &top, &right, &bottom))
+            continue;
+        rects.append(QRectF(left, pageHeight - top, right - left, top - bottom));
+    }
+#else
+    Q_UNUSED(start)
+#endif
+
+    return rects;
+}
+
+QString PdfDocument::textForRange(int pageIndex, int start, int count) const
+{
+    if (!m_valid || count <= 0 || pageIndex < 0 || pageIndex >= m_pages.size())
+        return {};
+
+#ifdef LUMEN_HAS_PDFIUM
+    QMutexLocker locker(&m_mutex);
+    auto textPage = static_cast<FPDF_TEXTPAGE>(acquireTextPage(pageIndex));
+    if (!textPage)
+        return {};
+
+    QVector<unsigned short> buffer(count + 1, 0);
+    const int written = FPDFText_GetText(textPage, start, count, buffer.data());
+    if (written <= 1)
+        return {};
+
+    return QString::fromUtf16(reinterpret_cast<const char16_t *>(buffer.constData()),
+                              written - 1);
+#else
+    Q_UNUSED(start)
+    return {};
+#endif
+}
+
+void PdfDocument::expandToWord(int pageIndex, int &start, int &count) const
+{
+    const int total = characterCount(pageIndex);
+    if (total <= 0 || start < 0 || start >= total)
+        return;
+
+    const QString page = pageText(pageIndex);
+    if (page.size() < total)
+        return;
+
+    const auto isWordChar = [](QChar c) {
+        return c.isLetterOrNumber() || c == u'_';
+    };
+
+    int from = qBound(0, start, page.size() - 1);
+    int to = qBound(0, start + qMax(1, count) - 1, page.size() - 1);
+
+    while (from > 0 && isWordChar(page.at(from - 1)))
+        --from;
+    while (to + 1 < page.size() && isWordChar(page.at(to + 1)))
+        ++to;
+
+    start = from;
+    count = to - from + 1;
+}
+
+void PdfDocument::expandToLine(int pageIndex, int &start, int &count) const
+{
+    const QString page = pageText(pageIndex);
+    if (page.isEmpty() || start < 0 || start >= page.size())
+        return;
+
+    int from = start;
+    int to = qBound(0, start + qMax(1, count) - 1, page.size() - 1);
+
+    while (from > 0 && page.at(from - 1) != u'\n' && page.at(from - 1) != u'\r')
+        --from;
+    while (to + 1 < page.size() && page.at(to + 1) != u'\n' && page.at(to + 1) != u'\r')
+        ++to;
+
+    start = from;
+    count = to - from + 1;
+}
+
+// ---------------------------------------------------------------------------
+// Editing
+// ---------------------------------------------------------------------------
+
+void PdfDocument::invalidatePage(int pageIndex)
+{
+    // Caller holds m_mutex. The cached text layer belongs to a page object
+    // that editing may have changed underneath it.
+    if (m_textCacheIndex == pageIndex)
+        releaseTextCache();
+}
+
+bool PdfDocument::addTextMarkup(int pageIndex,
+                                MarkupType type,
+                                const QVector<QRectF> &rects,
+                                const QColor &color)
+{
+    if (!m_valid || rects.isEmpty() || pageIndex < 0 || pageIndex >= m_pages.size())
+        return false;
+
+#ifdef LUMEN_HAS_PDFIUM
+    QMutexLocker locker(&m_mutex);
+    if (!m_handle)
+        return false;
+
+    invalidatePage(pageIndex);
+
+    FPDF_PAGE page = FPDF_LoadPage(static_cast<FPDF_DOCUMENT>(m_handle), pageIndex);
+    if (!page)
+        return false;
+
+    FPDF_ANNOTATION_SUBTYPE subtype = FPDF_ANNOT_HIGHLIGHT;
+    switch (type) {
+    case MarkupType::Highlight:  subtype = FPDF_ANNOT_HIGHLIGHT; break;
+    case MarkupType::Underline:  subtype = FPDF_ANNOT_UNDERLINE; break;
+    case MarkupType::StrikeOut:  subtype = FPDF_ANNOT_STRIKEOUT; break;
+    case MarkupType::Squiggly:   subtype = FPDF_ANNOT_SQUIGGLY;  break;
+    }
+
+    FPDF_ANNOTATION annot = FPDFPage_CreateAnnot(page, subtype);
+    if (!annot) {
+        FPDF_ClosePage(page);
+        return false;
+    }
+
+    const double pageHeight = m_pages.at(pageIndex).sizePoints.height();
+    QRectF bounds;
+
+    for (const QRectF &r : rects) {
+        if (r.width() <= 0 || r.height() <= 0)
+            continue;
+
+        bounds = bounds.isNull() ? r : bounds.united(r);
+
+        // Back to PDF user space (bottom-left origin). Quadpoint order is
+        // fixed by the spec: upper-left, upper-right, lower-left, lower-right.
+        const double top = pageHeight - r.top();
+        const double bottom = pageHeight - r.bottom();
+
+        FS_QUADPOINTSF quad {};
+        quad.x1 = r.left();  quad.y1 = top;
+        quad.x2 = r.right(); quad.y2 = top;
+        quad.x3 = r.left();  quad.y3 = bottom;
+        quad.x4 = r.right(); quad.y4 = bottom;
+
+        FPDFAnnot_AppendAttachmentPoints(annot, &quad);
+    }
+
+    if (bounds.isNull()) {
+        FPDFPage_CloseAnnot(annot);
+        FPDF_ClosePage(page);
+        return false;
+    }
+
+    FS_RECTF rect {};
+    rect.left = bounds.left();
+    rect.right = bounds.right();
+    rect.top = pageHeight - bounds.top();
+    rect.bottom = pageHeight - bounds.bottom();
+    FPDFAnnot_SetRect(annot, &rect);
+
+    FPDFAnnot_SetColor(annot, FPDFANNOT_COLORTYPE_Color,
+                       color.red(), color.green(), color.blue(), color.alpha());
+
+    FPDFPage_CloseAnnot(annot);
+
+    // Without this the annotation exists in memory but is missing from the
+    // page's object list when the document is written out.
+    FPDFPage_GenerateContent(page);
+    FPDF_ClosePage(page);
+
+    m_modified = true;
+    return true;
+#else
+    Q_UNUSED(type)
+    Q_UNUSED(color)
+    return false;
+#endif
+}
+
+int PdfDocument::annotationCount(int pageIndex) const
+{
+    if (!m_valid || pageIndex < 0 || pageIndex >= m_pages.size())
+        return 0;
+
+#ifdef LUMEN_HAS_PDFIUM
+    QMutexLocker locker(&m_mutex);
+    if (!m_handle)
+        return 0;
+
+    FPDF_PAGE page = FPDF_LoadPage(static_cast<FPDF_DOCUMENT>(m_handle), pageIndex);
+    if (!page)
+        return 0;
+
+    const int count = FPDFPage_GetAnnotCount(page);
+    FPDF_ClosePage(page);
+    return count;
+#else
+    return 0;
+#endif
+}
+
+int PdfDocument::annotationAt(int pageIndex, const QPointF &point) const
+{
+    if (!m_valid || pageIndex < 0 || pageIndex >= m_pages.size())
+        return -1;
+
+#ifdef LUMEN_HAS_PDFIUM
+    QMutexLocker locker(&m_mutex);
+    if (!m_handle)
+        return -1;
+
+    FPDF_PAGE page = FPDF_LoadPage(static_cast<FPDF_DOCUMENT>(m_handle), pageIndex);
+    if (!page)
+        return -1;
+
+    const double pageHeight = m_pages.at(pageIndex).sizePoints.height();
+    const double userY = pageHeight - point.y();
+
+    int found = -1;
+    const int count = FPDFPage_GetAnnotCount(page);
+
+    // Backwards: later annotations paint on top, so the topmost hit wins.
+    for (int i = count - 1; i >= 0; --i) {
+        FPDF_ANNOTATION annot = FPDFPage_GetAnnot(page, i);
+        if (!annot)
+            continue;
+
+        FS_RECTF rect {};
+        if (FPDFAnnot_GetRect(annot, &rect)) {
+            const double left = qMin(rect.left, rect.right);
+            const double right = qMax(rect.left, rect.right);
+            const double bottom = qMin(rect.top, rect.bottom);
+            const double top = qMax(rect.top, rect.bottom);
+
+            if (point.x() >= left && point.x() <= right
+                && userY >= bottom && userY <= top) {
+                found = i;
+            }
+        }
+
+        FPDFPage_CloseAnnot(annot);
+        if (found >= 0)
+            break;
+    }
+
+    FPDF_ClosePage(page);
+    return found;
+#else
+    Q_UNUSED(point)
+    return -1;
+#endif
+}
+
+bool PdfDocument::removeAnnotation(int pageIndex, int annotationIndex)
+{
+    if (!m_valid || annotationIndex < 0 || pageIndex < 0 || pageIndex >= m_pages.size())
+        return false;
+
+#ifdef LUMEN_HAS_PDFIUM
+    QMutexLocker locker(&m_mutex);
+    if (!m_handle)
+        return false;
+
+    invalidatePage(pageIndex);
+
+    FPDF_PAGE page = FPDF_LoadPage(static_cast<FPDF_DOCUMENT>(m_handle), pageIndex);
+    if (!page)
+        return false;
+
+    const bool ok = FPDFPage_RemoveAnnot(page, annotationIndex);
+    if (ok) {
+        FPDFPage_GenerateContent(page);
+        m_modified = true;
+    }
+
+    FPDF_ClosePage(page);
+    return ok;
+#else
+    return false;
+#endif
+}
+
+#ifdef LUMEN_HAS_PDFIUM
+namespace {
+
+// PDFium writes through a callback struct rather than to a path. The struct
+// must stay valid for the whole call, and its first member must be the
+// FPDF_FILEWRITE so the C side can cast between them.
+struct FileWriter {
+    FPDF_FILEWRITE base;
+    QFile *file;
+    bool failed;
+
+    static int write(FPDF_FILEWRITE *self, const void *data, unsigned long size)
+    {
+        auto *writer = reinterpret_cast<FileWriter *>(self);
+        if (writer->failed)
+            return 0;
+
+        const qint64 written = writer->file->write(static_cast<const char *>(data),
+                                                   qint64(size));
+        if (written != qint64(size)) {
+            writer->failed = true;
+            return 0;
+        }
+        return 1;
+    }
+};
+
+} // namespace
+#endif
+
+bool PdfDocument::saveAs(const QString &filePath)
+{
+    if (!m_valid || filePath.isEmpty())
+        return false;
+
+#ifdef LUMEN_HAS_PDFIUM
+    QMutexLocker locker(&m_mutex);
+    if (!m_handle)
+        return false;
+
+    // Writing over the file PDFium is still reading from would corrupt it:
+    // FPDF_SaveAsCopy streams out object data that it pulls from the original
+    // on demand. Callers save to a temporary and swap.
+    if (QFileInfo(filePath) == QFileInfo(m_filePath)) {
+        m_lastError = QStringLiteral("Cannot overwrite the file currently open.");
+        return false;
+    }
+
+    QFile out(filePath);
+    if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        m_lastError = QStringLiteral("Could not write to %1").arg(filePath);
+        return false;
+    }
+
+    FileWriter writer {};
+    writer.base.version = 1;
+    writer.base.WriteBlock = &FileWriter::write;
+    writer.file = &out;
+    writer.failed = false;
+
+    const bool ok = FPDF_SaveAsCopy(static_cast<FPDF_DOCUMENT>(m_handle),
+                                    &writer.base,
+                                    FPDF_INCREMENTAL);
+
+    out.close();
+
+    if (!ok || writer.failed) {
+        out.remove();
+        m_lastError = QStringLiteral("PDFium failed to write the document.");
+        return false;
+    }
+
+    m_modified = false;
+    return true;
+#else
+    Q_UNUSED(filePath)
+    return false;
+#endif
 }
 
 QImage PdfDocument::renderPlaceholder(int index, const QSize &pixelSize) const

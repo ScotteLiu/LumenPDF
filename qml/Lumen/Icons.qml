@@ -33,6 +33,11 @@ QtObject {
     readonly property string chevronRight: "M9.5 6l6 6-6 6"
     readonly property string close:        "M6.5 6.5l11 11 M17.5 6.5l-11 11"
 
+    readonly property string copy:      "M9 9h9a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2z M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"
+    readonly property string underline: "M7 4v7a5 5 0 0 0 10 0V4 M5 20h14"
+    readonly property string strikeout: "M7 5.5A3.5 3.5 0 0 1 10.5 3h3a3.5 3.5 0 0 1 3.4 2.7 M4 12h16 M17 15a3.5 3.5 0 0 1-3.5 3.5h-3A3.5 3.5 0 0 1 7 15"
+    readonly property string save:      "M5 3h11l3 3v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z M8 3v5h7 M8 21v-6h8v6"
+
     readonly property string thumbnails:   "M4 4h6v6H4z M14 4h6v6h-6z M4 14h6v6H4z M14 14h6v6h-6z"
     readonly property string outline:      "M4 6h3 M10 6h10 M4 12h3 M10 12h10 M4 18h3 M10 18h10"
 }

@@ -13,7 +13,7 @@ ApplicationWindow {
     minimumHeight: 520
     visible: true
     title: Document.title.length > 0
-           ? Document.title + " — LumenPDF"
+           ? (Document.modified ? "• " : "") + Document.title + " — LumenPDF"
            : "LumenPDF"
 
     color: Tokens.canvas
@@ -40,13 +40,62 @@ ApplicationWindow {
     }
     Shortcut { sequences: [StandardKey.FindNext]; onActivated: Document.search.next() }
     Shortcut { sequences: [StandardKey.FindPrevious]; onActivated: Document.search.previous() }
+
+    Shortcut {
+        sequences: [StandardKey.Copy]
+        onActivated: Document.selection.copyToClipboard()
+    }
+    Shortcut {
+        sequences: [StandardKey.SelectAll]
+        enabled: !searchField.activeFocus
+        onActivated: Document.selection.selectAll()
+    }
+    Shortcut {
+        sequence: "Esc"
+        onActivated: Document.selection.clear()
+    }
     Shortcut { sequence: "Ctrl+Shift+D"; onActivated: Tokens.dark = !Tokens.dark }
+
+    Shortcut {
+        sequences: [StandardKey.Save]
+        enabled: Document.modified
+        onActivated: Document.save()
+    }
+    Shortcut {
+        sequences: [StandardKey.SaveAs]
+        enabled: Document.status === DocumentStatus.Ready
+        onActivated: saveDialog.open()
+    }
 
     FileDialog {
         id: openDialog
         title: qsTr("Open PDF")
         nameFilters: [qsTr("PDF documents (*.pdf)"), qsTr("All files (*)")]
         onAccepted: Document.open(selectedFile)
+    }
+
+    FileDialog {
+        id: saveDialog
+        title: qsTr("Save PDF As")
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "pdf"
+        nameFilters: [qsTr("PDF documents (*.pdf)")]
+        onAccepted: Document.saveAs(selectedFile)
+    }
+
+    // Transient confirmation. Deliberately not a dialog: saving succeeded, so
+    // there is nothing to decide and nothing to dismiss.
+    Connections {
+        target: Document
+        function onSaved(filePath) { toast.show(qsTr("Saved")) }
+        function onSaveFailed(reason) { toast.show(reason, true) }
+    }
+
+    Connections {
+        target: Document.selection
+        function onCopied(characters) {
+            toast.show(qsTr("Copied %n character(s)", "", characters));
+        }
     }
 
     // -- Layout -------------------------------------------------------------
@@ -70,6 +119,16 @@ ApplicationWindow {
             tooltip: qsTr("Open  (Ctrl+O)")
             anchors.verticalCenter: parent.verticalCenter
             onClicked: openDialog.open()
+        }
+
+        LumenIconButton {
+            iconPath: Icons.save
+            tooltip: Document.modified ? qsTr("Save  (Ctrl+S)")
+                                       : qsTr("No unsaved changes")
+            enabled: Document.modified
+            active: Document.modified
+            anchors.verticalCenter: parent.verticalCenter
+            onClicked: Document.save()
         }
 
         Item { width: Tokens.space3; height: 1 }
@@ -257,6 +316,15 @@ ApplicationWindow {
         loading: Document.status === DocumentStatus.Loading
         errorText: Document.status === DocumentStatus.Error ? Document.errorString : ""
         onOpenRequested: openDialog.open()
+    }
+
+    LumenToast {
+        id: toast
+        anchors.left: pageView.left
+        anchors.right: pageView.right
+        anchors.bottom: parent.bottom
+        height: 120
+        z: 200
     }
 
     // Whole-window drag and drop.

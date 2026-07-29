@@ -66,7 +66,9 @@ Item {
                     asynchronous: true
                     cache: false
                     fillMode: Image.PreserveAspectFit
-                    source: "image://pdfpage/" + index + "?w=" + Math.round(root.thumbWidth * 2)
+                    source: "image://pdfpage/" + index
+                            + "?w=" + Math.round(root.thumbWidth * 2)
+                            + "&g=" + Document.renderGeneration
                     sourceSize: Qt.size(Math.round(root.thumbWidth * 2), 0)
 
                     opacity: status === Image.Ready ? 1.0 : 0.0

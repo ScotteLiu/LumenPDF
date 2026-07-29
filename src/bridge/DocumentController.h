@@ -2,8 +2,10 @@
 
 // Full definitions, not forward declarations: moc needs complete types for any
 // class used as a Q_PROPERTY pointer.
+#include "bridge/AnnotationController.h"
 #include "bridge/OutlineModel.h"
 #include "bridge/SearchController.h"
+#include "bridge/SelectionController.h"
 
 #include <QAbstractItemModel>
 #include <QObject>
@@ -32,6 +34,16 @@ class DocumentController : public QObject {
     Q_PROPERTY(QAbstractItemModel *outlineModel READ outlineModelAsItemModel CONSTANT)
     Q_PROPERTY(lumen::OutlineModel *outline READ outlineModel CONSTANT)
     Q_PROPERTY(lumen::SearchController *search READ search CONSTANT)
+    Q_PROPERTY(lumen::SelectionController *selection READ selection CONSTANT)
+    Q_PROPERTY(lumen::AnnotationController *annotate READ annotate CONSTANT)
+
+    Q_PROPERTY(bool modified READ isModified NOTIFY modifiedChanged)
+
+    // Bumped whenever rendered page content changes. Page images append it to
+    // their source URL, which is what makes QML re-fetch them -- an Image
+    // whose source string is unchanged will never reload, however stale the
+    // pixels behind it are.
+    Q_PROPERTY(int renderGeneration READ renderGeneration NOTIFY renderGenerationChanged)
 
 public:
     // Unscoped on purpose: QML reads these as DocumentStatus.Ready etc.
@@ -59,6 +71,17 @@ public:
     OutlineModel *outlineModel() const { return m_outlineModel; }
     QAbstractItemModel *outlineModelAsItemModel() const;
     SearchController *search() const { return m_search; }
+    SelectionController *selection() const { return m_selection; }
+    AnnotationController *annotate() const { return m_annotate; }
+
+    bool isModified() const;
+    int renderGeneration() const { return m_renderGeneration; }
+
+    // Saves to `url`. Passing the currently open file is handled correctly:
+    // the write goes to a temporary alongside it and is swapped in, because
+    // PDFium still has the original mapped while it writes.
+    Q_INVOKABLE bool saveAs(const QUrl &url);
+    Q_INVOKABLE bool save();
 
     Q_INVOKABLE void open(const QUrl &url);
     Q_INVOKABLE void close();
@@ -69,6 +92,10 @@ public:
 signals:
     void statusChanged();
     void documentChanged();
+    void modifiedChanged();
+    void renderGenerationChanged();
+    void saved(const QString &filePath);
+    void saveFailed(const QString &reason);
 
 private:
     void setStatus(Status status, const QString &error = {});
@@ -84,6 +111,10 @@ private:
     PageListModel *m_pageModel = nullptr;
     OutlineModel *m_outlineModel = nullptr;
     SearchController *m_search = nullptr;
+    SelectionController *m_selection = nullptr;
+    AnnotationController *m_annotate = nullptr;
+
+    int m_renderGeneration = 0;
 };
 
 } // namespace lumen

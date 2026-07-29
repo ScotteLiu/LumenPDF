@@ -25,6 +25,7 @@ qt_add_qml_module(Lumen
         LumenSearchField.qml
         LumenSeparator.qml
         LumenSegmented.qml
+        LumenToast.qml
 )
 
 target_link_libraries(Lumen PRIVATE Qt6::Quick)

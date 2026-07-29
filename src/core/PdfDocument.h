@@ -2,8 +2,10 @@
 
 #include "core/PdfTypes.h"
 
+#include <QColor>
 #include <QImage>
 #include <QMutex>
+#include <QPointF>
 #include <QSizeF>
 #include <QString>
 #include <QVector>
@@ -57,8 +59,63 @@ public:
                                   bool matchCase,
                                   bool wholeWord) const;
 
+    // -- Text selection ----------------------------------------------------
+    //
+    // All coordinates are PDF points with a top-left origin, matching the
+    // search rectangles and what the page view draws in.
+
+    int characterCount(int pageIndex) const;
+
+    // Nearest character to a point, or -1 if none is within `tolerance`.
+    int characterAt(int pageIndex, const QPointF &point, double tolerance = 6.0) const;
+
+    // Index of the character whose box contains the point, else the closest
+    // insertion position on that line. Used for drag selection, where the
+    // pointer is regularly in the gutter between words.
+    int insertionPointAt(int pageIndex, const QPointF &point) const;
+
+    QVector<QRectF> rectsForRange(int pageIndex, int start, int count) const;
+    QString textForRange(int pageIndex, int start, int count) const;
+
+    // Expands a range to whole words / the whole line. Backs double- and
+    // triple-click.
+    void expandToWord(int pageIndex, int &start, int &count) const;
+    void expandToLine(int pageIndex, int &start, int &count) const;
+
+    // -- Editing -----------------------------------------------------------
+
+    // Adds a text markup annotation covering `rects` (PDF points, top-left
+    // origin -- the same space selection and search work in).
+    bool addTextMarkup(int pageIndex,
+                       MarkupType type,
+                       const QVector<QRectF> &rects,
+                       const QColor &color);
+
+    // Number of annotations on a page, and removal by index. Index is
+    // PDFium's own ordering, which is what hit-testing returns.
+    int annotationCount(int pageIndex) const;
+    bool removeAnnotation(int pageIndex, int annotationIndex);
+
+    // Index of the topmost annotation whose rectangle contains `point`, or -1.
+    int annotationAt(int pageIndex, const QPointF &point) const;
+
+    bool isModified() const { return m_modified; }
+
+    // Writes the document, annotations included. Saving over the original is
+    // refused -- see the implementation for why.
+    bool saveAs(const QString &filePath);
+
 private:
     void buildOutline();
+    void invalidatePage(int pageIndex);
+
+    // Text extraction handles for the most recently touched page, kept open.
+    //
+    // Hit-testing runs on every mouse move during a drag; loading and closing
+    // a page plus its text layer each time would make selection visibly lag on
+    // a dense page. Caller must hold m_mutex.
+    void *acquireTextPage(int pageIndex) const;
+    void releaseTextCache() const;
     QImage renderPlaceholder(int index, const QSize &pixelSize) const;
 
     mutable QMutex m_mutex;
@@ -68,6 +125,12 @@ private:
     QString m_lastError;
     QVector<PageInfo> m_pages;
     QVector<OutlineItem> m_outline;
+
+    bool m_modified = false;
+
+    mutable int m_textCacheIndex = -1;
+    mutable void *m_textCachePage = nullptr;      // FPDF_PAGE
+    mutable void *m_textCacheTextPage = nullptr;  // FPDF_TEXTPAGE
 };
 
 } // namespace lumen

@@ -1,6 +1,8 @@
+#include "bridge/AnnotationController.h"
 #include "bridge/DocumentController.h"
 #include "bridge/OutlineModel.h"
 #include "bridge/SearchController.h"
+#include "bridge/SelectionController.h"
 #include "core/PdfEngine.h"
 #include "platform/PlatformWindow.h"
 #include "render/PageImageProvider.h"
@@ -108,6 +110,9 @@ int main(int argc, char *argv[])
     qmlRegisterUncreatableType<lumen::OutlineModel>(
         "Lumen.Backend", 1, 0, "Outline",
         QStringLiteral("Use Document.outline"));
+    qmlRegisterUncreatableType<lumen::AnnotationController>(
+        "Lumen.Backend", 1, 0, "AnnotationType",
+        QStringLiteral("Use Document.annotate"));
 
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed,
                      &app, []() { QCoreApplication::exit(-1); },
@@ -122,13 +127,58 @@ int main(int argc, char *argv[])
 
     // Drive a search from the environment, so capture runs and smoke tests can
     // exercise the results path without synthesising input events.
+    //
+    // Single-shot, always. Saving reopens the document and re-emits
+    // documentChanged, so a persistent connection turns
+    // "select -> annotate -> save" into an infinite loop that spins the CPU
+    // and grows the file without ever finishing.
     if (qEnvironmentVariableIsSet("LUMEN_SEARCH")) {
         const QString query = qEnvironmentVariable("LUMEN_SEARCH");
         QObject::connect(controller, &lumen::DocumentController::documentChanged,
                          controller, [controller, query] {
                              if (controller->pageCount() > 0)
                                  controller->search()->setQuery(query);
-                         });
+                         },
+                         Qt::SingleShotConnection);
+    }
+
+    // Test hook: drive a drag-selection from the environment, as
+    // "page,x1,y1,x2,y2" in PDF points with a top-left origin.
+    if (qEnvironmentVariableIsSet("LUMEN_SELECT")) {
+        const QStringList parts = qEnvironmentVariable("LUMEN_SELECT").split(u',');
+        if (parts.size() == 5) {
+            QObject::connect(controller, &lumen::DocumentController::documentChanged,
+                             controller, [controller, parts] {
+                                 if (controller->pageCount() <= 0)
+                                     return;
+                                 auto *selection = controller->selection();
+                                 const int page = parts.at(0).toInt();
+                                 selection->begin(page, QPointF(parts.at(1).toDouble(),
+                                                                parts.at(2).toDouble()));
+                                 selection->extend(page, QPointF(parts.at(3).toDouble(),
+                                                                 parts.at(4).toDouble()));
+                                 selection->end();
+
+                                 // Optional follow-on actions, so a single run
+                                 // can exercise select -> annotate -> save.
+                                 const QString action = qEnvironmentVariable("LUMEN_ANNOTATE");
+                                 if (action == QLatin1String("highlight"))
+                                     controller->annotate()->applyToSelection(
+                                         lumen::AnnotationController::Highlight);
+                                 else if (action == QLatin1String("underline"))
+                                     controller->annotate()->applyToSelection(
+                                         lumen::AnnotationController::Underline);
+                                 else if (action == QLatin1String("strikeout"))
+                                     controller->annotate()->applyToSelection(
+                                         lumen::AnnotationController::StrikeOut);
+
+                                 if (qEnvironmentVariableIsSet("LUMEN_SAVE_AS")) {
+                                     controller->saveAs(QUrl::fromLocalFile(
+                                         qEnvironmentVariable("LUMEN_SAVE_AS")));
+                                 }
+                             },
+                             Qt::SingleShotConnection);
+        }
     }
 
     installCaptureHook(engine);

@@ -44,6 +44,15 @@ Item {
         function onCurrentIndexChanged() { root._highlightGeneration++ }
     }
 
+    // Same trick for the selection: it changes on every mouse move during a
+    // drag, so the counter is what makes the overlay follow the pointer.
+    property int _selectionGeneration: 0
+
+    Connections {
+        target: Document.selection
+        function onChanged() { root._selectionGeneration++ }
+    }
+
     function zoomBy(factor) {
         zoom = Math.max(minZoom, Math.min(maxZoom, zoom * factor));
     }
@@ -168,7 +177,12 @@ Item {
                         Math.ceil(pageSlot.pageWidth * Screen.devicePixelRatio
                                   / root._renderBucket) * root._renderBucket
 
-                    source: "image://pdfpage/" + pageSlot.index + "?w=" + renderWidth
+                    // The generation suffix is what forces a reload after an
+                    // edit: an Image whose source string has not changed will
+                    // never re-fetch, however stale its pixels are.
+                    source: "image://pdfpage/" + pageSlot.index
+                            + "?w=" + renderWidth
+                            + "&g=" + Document.renderGeneration
                     sourceSize: Qt.size(renderWidth, 0)
 
                     opacity: status === Image.Ready ? 1.0 : 0.0
@@ -177,6 +191,125 @@ Item {
                             duration: Motion.normal
                             easing.type: Easing.OutCubic
                         }
+                    }
+                }
+
+                // -- Text selection ---------------------------------------
+                //
+                // Drawn under the search highlights: a search hit inside a
+                // selection should still read as a search hit.
+                Repeater {
+                    model: root._selectionGeneration >= 0
+                           ? Document.selection.rectsForPage(pageSlot.index)
+                           : []
+
+                    delegate: Rectangle {
+                        required property var modelData
+
+                        readonly property real pointScale:
+                            pageSlot.pageWidth / pageSlot.widthPoints
+
+                        x: modelData.x * pointScale
+                        y: modelData.y * pointScale
+                        width: modelData.width * pointScale
+                        height: modelData.height * pointScale
+
+                        color: Tokens.accent
+                        opacity: 0.28
+                        radius: 1.5
+                    }
+                }
+
+                // The floating action bar for the selection, shown on the
+                // first page the selection touches and only once the drag has
+                // finished. Loaded lazily -- it does not exist at all while
+                // there is nothing selected.
+                Loader {
+                    id: selectionToolbar
+
+                    readonly property var selRects:
+                        root._selectionGeneration >= 0
+                        ? Document.selection.rectsForPage(pageSlot.index)
+                        : []
+
+                    readonly property real pointScale:
+                        pageSlot.pageWidth / pageSlot.widthPoints
+
+                    active: !Document.selection.active
+                            && selRects.length > 0
+                            && pageSlot.index === Document.selection.firstPage
+
+                    z: 50
+                    asynchronous: false
+                    sourceComponent: SelectionToolbar {
+                        onDismissed: Document.selection.clear()
+                    }
+
+                    // Centred over the selection and floated above its top
+                    // edge, clamped so it never leaves the page.
+                    x: {
+                        if (!item || selRects.length === 0)
+                            return 0;
+                        let left = Infinity, right = -Infinity;
+                        for (const r of selRects) {
+                            left = Math.min(left, r.x);
+                            right = Math.max(right, r.x + r.width);
+                        }
+                        const centre = ((left + right) / 2) * pointScale;
+                        return Math.max(Tokens.space2,
+                               Math.min(pageSlot.pageWidth - item.width - Tokens.space2,
+                                        centre - item.width / 2));
+                    }
+
+                    y: {
+                        if (!item || selRects.length === 0)
+                            return 0;
+                        let top = Infinity;
+                        for (const r of selRects)
+                            top = Math.min(top, r.y);
+                        return Math.max(Tokens.space2,
+                                        top * pointScale - item.height - Tokens.space2);
+                    }
+                }
+
+                // Pointer handling for this page. Coordinates are converted
+                // from view pixels back to PDF points here, so nothing below
+                // this line has to know about zoom.
+                MouseArea {
+                    id: textArea
+                    anchors.fill: parent
+                    acceptedButtons: Qt.LeftButton
+                    cursorShape: Qt.IBeamCursor
+
+                    // The ListView is a Flickable, and would otherwise steal
+                    // the drag to scroll -- making text selection impossible
+                    // with a mouse. Selection wins; the wheel still scrolls.
+                    preventStealing: true
+
+                    readonly property real toPoints:
+                        pageSlot.widthPoints / pageSlot.pageWidth
+
+                    function pointAt(mx, my) {
+                        return Qt.point(mx * toPoints, my * toPoints);
+                    }
+
+                    onPressed: (mouse) => {
+                        const p = pointAt(mouse.x, mouse.y);
+                        Document.selection.begin(pageSlot.index, p);
+                    }
+
+                    onPositionChanged: (mouse) => {
+                        if (!pressed)
+                            return;
+                        const p = pointAt(mouse.x, mouse.y);
+                        Document.selection.extend(pageSlot.index, p);
+                    }
+
+                    onReleased: Document.selection.end()
+
+                    onDoubleClicked: (mouse) => {
+                        const p = pointAt(mouse.x, mouse.y);
+                        Document.selection.selectWordAt(pageSlot.index, p);
                     }
                 }
 

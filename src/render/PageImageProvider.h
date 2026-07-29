@@ -26,6 +26,10 @@ public:
     // Called from the GUI thread when a document is opened or closed.
     void setDocument(const QSharedPointer<PdfDocument> &document);
 
+    // Drops every cached raster. Called after an edit, since annotations
+    // change what a page looks like at every zoom level at once.
+    void clearCache();
+
     QQuickImageResponse *requestImageResponse(const QString &id,
                                               const QSize &requestedSize) override;
 

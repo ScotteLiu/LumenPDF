@@ -67,7 +67,12 @@ public:
     void run() override
     {
         if (!m_request.valid || !m_document || !m_document->isValid()) {
-            m_error = QStringLiteral("No document loaded");
+            // Not an error: this happens for one frame every time a document
+            // is swapped (opening a file, or reopening after a save). Reporting
+            // it as a failure makes QML log a warning and show a broken image
+            // for a state that resolves itself immediately.
+            m_image = QImage(1, 1, QImage::Format_ARGB32_Premultiplied);
+            m_image.fill(Qt::transparent);
             emit finished();
             return;
         }
@@ -129,6 +134,11 @@ void PageImageProvider::setDocument(const QSharedPointer<PdfDocument> &document)
         QMutexLocker locker(&m_documentMutex);
         m_document = document;
     }
+    m_cache->clear();
+}
+
+void PageImageProvider::clearCache()
+{
     m_cache->clear();
 }
 

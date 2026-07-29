@@ -6,6 +6,17 @@
 
 namespace lumen {
 
+// Text markup annotation kinds, in PDF's own terms.
+//
+// All four attach to a run of text via quadpoints, so they share one code
+// path; only the subtype and the default colour differ.
+enum class MarkupType {
+    Highlight,
+    Underline,
+    StrikeOut,
+    Squiggly,
+};
+
 // One search match.
 //
 // Rectangles are in PDF points with a **top-left** origin -- converted from
