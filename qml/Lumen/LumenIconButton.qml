@@ -1,14 +1,17 @@
-import QtQuick
+﻿import QtQuick
 import QtQuick.Templates as T
 import Lumen
 
-// Square icon button for toolbars. Takes a glyph string rather than an image
-// so the toolbar stays resolution-independent and themeable until a proper
-// icon set is drawn.
+// Square icon button for toolbars. Takes an SVG path from Icons rather than a
+// font glyph or a bitmap, so it stays crisp at any DPI and identical across
+// platforms.
+//
+// The property is `iconPath`, not `icon`: AbstractButton already declares a
+// FINAL `icon` group, and shadowing it makes the whole type fail to load.
 T.Button {
     id: control
 
-    property string glyph: ""
+    property string iconPath: ""             // an SVG path from Icons
     property bool active: false          // sticky "on" state, e.g. sidebar toggle
     property string tooltip: ""
 
@@ -43,16 +46,18 @@ T.Button {
         }
     }
 
-    contentItem: Text {
-        text: control.glyph
-        font.family: Tokens.fontFamily
-        font.pixelSize: Tokens.iconSize
-        color: control.active ? Tokens.accent : Tokens.textPrimary
-        horizontalAlignment: Text.AlignHCenter
-        verticalAlignment: Text.AlignVCenter
+    contentItem: Item {
+        LumenIcon {
+            anchors.centerIn: parent
+            path: control.iconPath
+            size: Tokens.iconSize
+            color: control.active ? Tokens.accent
+                 : control.enabled ? Tokens.textPrimary
+                 : Tokens.textTertiary
 
-        Behavior on color {
-            ColorAnimation { duration: Motion.instant; easing.type: Easing.OutCubic }
+            Behavior on color {
+                ColorAnimation { duration: Motion.instant; easing.type: Easing.OutCubic }
+            }
         }
     }
 
@@ -104,3 +109,4 @@ T.Button {
         }
     }
 }
+

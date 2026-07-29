@@ -77,9 +77,74 @@
 | 字型用 Inter，不用 SF Pro | SF Pro 不可隨產品散布 | 低 |
 | 先做 Windows | 先驗證市場 | 低——平台碼已隔離 |
 
-### 尚未驗證
+### 第一次建置與執行 — 已驗證
 
-**整份骨架還沒編譯過。** Qt 當時仍在下載。第一次 configure 預期會有數個小錯
-（QML 模組連結、PDFium API 細節簽章）。下一則日誌會記錄實際踩到什麼。
+**C++ 端第一次就編過，零錯誤。** 92 個 target 全綠。
+PDFium 正常運作：`lumen.document: opened ... pages: 6`。
 
-Git：`main` 分支，1 個 commit，尚未推上 GitHub。
+真正的 bug 全在 QML 那一側，而且都是「編得過、跑起來才錯」的類型：
+
+**Bug 1：QML singleton 沒註冊（嚴重）**
+
+症狀是 app 開得起來，但畫面一片黑，log 噴出上百行
+`Unable to assign [undefined] to QColor` —— **每一個 `Tokens.*` 和 `Motion.*` 都是 undefined。**
+
+原因：`set_source_files_properties(... QT_QML_SINGLETON_TYPE TRUE)` 寫在
+`qt_add_qml_module()` **後面**。`qmldir` 是在 `qt_add_qml_module()` 當下就產生的，
+之後才設的屬性根本不會被讀到。修正後 `qmldir` 才出現：
+
+```
+singleton Tokens 1.0 Tokens.qml
+singleton Motion 1.0 Motion.qml
+```
+
+這個坑很陰：CMake 不報錯、編譯不報錯、連 qmlcachegen 都正常跑完。
+**教訓：所有 `set_source_files_properties` 一律寫在 `qt_add_qml_module` 之前。**
+
+**Bug 2：`icon` 是 FINAL 屬性**
+
+`LumenIconButton` 宣告 `property string icon` → 執行期
+`Cannot override FINAL property`。`AbstractButton` 已經有一個 FINAL 的 `icon`
+group property。改名為 `iconPath`。
+
+**Bug 3：`cacheBuffer` 為負**
+
+第一次 layout 時 `height` 還是 -1，`height * 1.5` 變負數。加 `Math.max(0, ...)`。
+
+### 圖示：從 Unicode 字元換成自繪向量
+
+第一版工具列用 `☰ ＋ − ⤢` 這類 Unicode 字元。截圖一看就發現兩個問題：
+「開檔」和「放大」都用了 `＋`，而且這些字元在 macOS／Linux 上根本不保證存在。
+
+改成 `Icons.qml`（24×24 SVG path 資料）+ `LumenIcon.qml`（用 `QtQuick.Shapes` 描邊繪製）。
+全平台一致、任何 DPI 都銳利、換色不用換資產。house style：24×24 網格、
+只描邊不填色、線寬 1.75、圓端點圓接合。
+
+### UI 截圖機制
+
+外部截圖（PowerShell + `CopyFromScreen`）在自動化環境下必然失敗——
+`The handle is invalid`，因為沒有互動式桌面工作階段。
+
+改成 **app 自己截自己**：設 `LUMEN_CAPTURE=<path.png>` 就會在
+`LUMEN_CAPTURE_DELAY` 毫秒後呼叫 `QQuickWindow::grabWindow()` 存檔並退出。
+這也是之後做視覺回歸測試的基礎。
+
+```powershell
+$env:LUMEN_CAPTURE="work\ui-check\shot.png"; $env:LUMEN_CAPTURE_DELAY="4500"
+.\build\windows-release\lumenpdf.exe some.pdf
+```
+
+另外：因為 exe 是 WIN32 子系統（沒有 console），Qt 的 log 預設無處可去。
+要設 `QT_FORCE_STDERR_LOGGING=1` 才看得到。
+
+### 目前狀態
+
+- 開檔、渲染、捲動、縮放、深色主題、拖放開檔：**已驗證可用**
+- Qt/QML 警告：**已全部清空**
+- 記憶體：開一份 6 頁論文約 160 MB（含 Qt runtime）
+
+### 下一步
+
+搜尋、大綱側欄、註解層、頁面操作、存檔。
+
+Git：`main` 分支，尚未推上 GitHub。

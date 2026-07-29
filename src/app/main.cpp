@@ -9,6 +9,50 @@
 #include <QQmlContext>
 #include <QQuickStyle>
 #include <QQuickWindow>
+#include <QTimer>
+
+namespace {
+
+// UI capture mode, used for screenshot review and visual regression checks.
+//
+// Set LUMEN_CAPTURE to an output .png path and the app grabs its own window
+// once and exits. Grabbing from inside the process is the only reliable route
+// here: an external screen capture needs an interactive desktop session, which
+// automated runs do not have.
+//
+//   LUMEN_CAPTURE=work\ui-check\shot.png  LUMEN_CAPTURE_DELAY=3000  lumenpdf.exe file.pdf
+void installCaptureHook(QQmlApplicationEngine &engine)
+{
+    const QByteArray target = qgetenv("LUMEN_CAPTURE");
+    if (target.isEmpty())
+        return;
+
+    bool ok = false;
+    const int delayMs = qEnvironmentVariableIntValue("LUMEN_CAPTURE_DELAY", &ok);
+
+    QTimer::singleShot(ok && delayMs > 0 ? delayMs : 2500, &engine, [&engine, target] {
+        const auto roots = engine.rootObjects();
+        auto *window = roots.isEmpty() ? nullptr : qobject_cast<QQuickWindow *>(roots.first());
+        if (!window) {
+            qWarning("capture: no QQuickWindow root");
+            QCoreApplication::exit(2);
+            return;
+        }
+
+        const QImage shot = window->grabWindow();
+        const QString path = QString::fromLocal8Bit(target);
+        if (shot.isNull() || !shot.save(path)) {
+            qWarning("capture: failed to write %s", qPrintable(path));
+            QCoreApplication::exit(3);
+            return;
+        }
+
+        qInfo("capture: wrote %s (%dx%d)", qPrintable(path), shot.width(), shot.height());
+        QCoreApplication::quit();
+    });
+}
+
+} // namespace
 
 int main(int argc, char *argv[])
 {
@@ -56,6 +100,8 @@ int main(int argc, char *argv[])
     const QStringList args = QGuiApplication::arguments();
     if (args.size() > 1)
         controller->open(QUrl::fromLocalFile(args.at(1)));
+
+    installCaptureHook(engine);
 
     const int result = app.exec();
 

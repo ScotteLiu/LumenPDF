@@ -61,8 +61,9 @@ Item {
 
         model: Document.pageModel
 
-        // One viewport of pre-rendered pages in each direction.
-        cacheBuffer: Math.round(root.height * 1.5)
+        // One viewport of pre-rendered pages in each direction. Clamped at
+        // zero: during the first layout pass height is still -1.
+        cacheBuffer: Math.max(0, Math.round(root.height * 1.5))
         reuseItems: true
 
         boundsBehavior: Flickable.StopAtBounds

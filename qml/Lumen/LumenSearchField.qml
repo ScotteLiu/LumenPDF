@@ -34,11 +34,11 @@ T.TextField {
         Behavior on fillColor { ColorAnimation { duration: Motion.fast } }
         Behavior on strokeColor { ColorAnimation { duration: Motion.fast } }
 
-        Text {
+        LumenIcon {
             x: Tokens.space3
             anchors.verticalCenter: parent.verticalCenter
-            text: "⌕"
-            font.pixelSize: Tokens.iconSize - 2
+            path: Icons.search
+            size: Tokens.iconSize - 3
             color: control.activeFocus ? Tokens.accent : Tokens.textTertiary
             Behavior on color { ColorAnimation { duration: Motion.fast } }
         }

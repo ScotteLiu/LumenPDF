@@ -1,4 +1,4 @@
-import QtQuick
+﻿import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Dialogs
 import Lumen
@@ -48,55 +48,66 @@ ApplicationWindow {
         z: 10
 
         LumenIconButton {
-            glyph: "☰"
+            iconPath: Icons.thumbnails
             tooltip: qsTr("Toggle sidebar  (Ctrl+B)")
             active: sidebar.expanded
             anchors.verticalCenter: parent.verticalCenter
             onClicked: sidebar.expanded = !sidebar.expanded
         }
 
-        Item { width: Tokens.space2; height: 1 }
-
         LumenIconButton {
-            glyph: "＋"
+            iconPath: Icons.open
             tooltip: qsTr("Open  (Ctrl+O)")
             anchors.verticalCenter: parent.verticalCenter
             onClicked: openDialog.open()
         }
 
-        Item { width: Tokens.space4; height: 1 }
+        Item { width: Tokens.space3; height: 1 }
+        LumenSeparator {
+            vertical: true
+            height: Tokens.space5
+            anchors.verticalCenter: parent.verticalCenter
+        }
+        Item { width: Tokens.space3; height: 1 }
 
         LumenIconButton {
-            glyph: "−"
-            tooltip: qsTr("Zoom out")
+            iconPath: Icons.zoomOut
+            tooltip: qsTr("Zoom out  (Ctrl+-)")
             enabled: Document.status === DocumentStatus.Ready
             anchors.verticalCenter: parent.verticalCenter
             onClicked: pageView.zoomBy(0.8)
         }
 
+        // Click the percentage to snap back to 100%.
         Item {
-            width: 64
+            width: 58
             height: toolbar.height
+
             Text {
                 anchors.centerIn: parent
                 text: Math.round(pageView.zoom * 100) + "%"
                 font.family: Tokens.fontFamily
                 font.pixelSize: Tokens.textSmall
                 font.weight: Tokens.weightMedium
-                color: Tokens.textSecondary
+                font.features: ({ "tnum": 1 })   // tabular figures: no jitter
+                color: zoomHover.hovered ? Tokens.textPrimary : Tokens.textSecondary
+                Behavior on color { ColorAnimation { duration: Motion.instant } }
             }
+
+            HoverHandler { id: zoomHover }
+            TapHandler { onTapped: pageView.zoom = 1.0 }
         }
 
         LumenIconButton {
-            glyph: "＋"
-            tooltip: qsTr("Zoom in")
+            iconPath: Icons.zoomIn
+            tooltip: qsTr("Zoom in  (Ctrl++)")
             enabled: Document.status === DocumentStatus.Ready
             anchors.verticalCenter: parent.verticalCenter
             onClicked: pageView.zoomBy(1.25)
         }
 
         LumenIconButton {
-            glyph: "⤢"
+            iconPath: Icons.fitWidth
             tooltip: qsTr("Fit width  (Ctrl+0)")
             enabled: Document.status === DocumentStatus.Ready
             anchors.verticalCenter: parent.verticalCenter
@@ -121,7 +132,7 @@ ApplicationWindow {
         }
 
         LumenIconButton {
-            glyph: Tokens.dark ? "☀" : "☾"
+            iconPath: Tokens.dark ? Icons.sun : Icons.moon
             tooltip: qsTr("Toggle theme  (Ctrl+Shift+D)")
             anchors.verticalCenter: parent.verticalCenter
             onClicked: Tokens.dark = !Tokens.dark
@@ -168,3 +179,4 @@ ApplicationWindow {
         }
     }
 }
+
