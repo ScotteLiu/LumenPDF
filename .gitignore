@@ -1,0 +1,16 @@
+build/
+out/
+.vs/
+.vscode/
+.idea/
+CMakeUserPresets.json
+compile_commands.json
+
+# PDFium binaries are fetched, never committed
+third_party/pdfium/
+
+*.user
+*.exe
+*.dll
+*.pdb
+*.ilk

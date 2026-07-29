@@ -1,0 +1,73 @@
+#pragma once
+
+#include <QObject>
+#include <QSharedPointer>
+#include <QUrl>
+
+namespace lumen {
+
+class PdfDocument;
+class PageImageProvider;
+class PageListModel;
+
+// The single object QML talks to. Opening a document is asynchronous so a
+// large file never freezes the window; QML reacts to the status change.
+class DocumentController : public QObject {
+    Q_OBJECT
+
+    Q_PROPERTY(Status status READ status NOTIFY statusChanged)
+    Q_PROPERTY(QString title READ title NOTIFY documentChanged)
+    Q_PROPERTY(QString filePath READ filePath NOTIFY documentChanged)
+    Q_PROPERTY(int pageCount READ pageCount NOTIFY documentChanged)
+    Q_PROPERTY(QString errorString READ errorString NOTIFY statusChanged)
+    Q_PROPERTY(QObject *pageModel READ pageModelObject CONSTANT)
+
+public:
+    // Unscoped on purpose: QML reads these as DocumentStatus.Ready etc.
+    enum Status {
+        Empty,
+        Loading,
+        Ready,
+        Error,
+    };
+    Q_ENUM(Status)
+
+    explicit DocumentController(QObject *parent = nullptr);
+    ~DocumentController() override;
+
+    // Ownership stays with the QML engine; the controller only keeps a pointer
+    // so it can hand the provider each newly opened document.
+    void setImageProvider(PageImageProvider *provider);
+
+    Status status() const { return m_status; }
+    QString title() const { return m_title; }
+    QString filePath() const { return m_filePath; }
+    int pageCount() const;
+    QString errorString() const { return m_errorString; }
+    QObject *pageModelObject() const;
+
+    Q_INVOKABLE void open(const QUrl &url);
+    Q_INVOKABLE void close();
+
+    // Page width in PDF points. Returns 0 for an out-of-range index.
+    Q_INVOKABLE double pageWidthPoints(int index) const;
+
+signals:
+    void statusChanged();
+    void documentChanged();
+
+private:
+    void setStatus(Status status, const QString &error = {});
+    void adoptDocument(const QSharedPointer<PdfDocument> &document);
+
+    Status m_status = Status::Empty;
+    QString m_title;
+    QString m_filePath;
+    QString m_errorString;
+
+    QSharedPointer<PdfDocument> m_document;
+    PageImageProvider *m_provider = nullptr;
+    PageListModel *m_pageModel = nullptr;
+};
+
+} // namespace lumen
