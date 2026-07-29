@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Window
 import Lumen
 
 // A hairline. Always exactly one physical pixel, never scaled by the device
@@ -6,7 +7,7 @@ import Lumen
 Rectangle {
     property bool vertical: false
 
-    implicitWidth: vertical ? 1 / Screen.devicePixelRatio : parent.width
-    implicitHeight: vertical ? parent.height : 1 / Screen.devicePixelRatio
+    implicitWidth: vertical ? 1 / Screen.devicePixelRatio : (parent ? parent.width : 0)
+    implicitHeight: vertical ? (parent ? parent.height : 0) : 1 / Screen.devicePixelRatio
     color: Tokens.separator
 }

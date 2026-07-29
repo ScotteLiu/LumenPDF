@@ -148,12 +148,12 @@ QQuickImageResponse *PageImageProvider::requestImageResponse(const QString &id,
         request.width = qBound(kMinRenderWidth, requestedSize.width(), kMaxRenderWidth);
 
     auto *response = new PageResponse(request, document(), m_cache);
-    m_pool.start(response);
 
-    // QQuickImageResponse deletes itself once the engine has consumed it, which
-    // is why autoDelete is off on the QRunnable side.
-    connect(response, &QQuickImageResponse::finished,
-            response, &QObject::deleteLater);
+    // The QML engine owns the response and deletes it once it has taken the
+    // texture -- hence autoDelete off on the QRunnable side, and no deleteLater
+    // here. (QQuickImageProvider is not a QObject, so there is nothing to
+    // parent it to either.)
+    m_pool.start(response);
 
     return response;
 }

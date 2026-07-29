@@ -1,4 +1,6 @@
 import QtQuick
+import QtQuick.Window
+import QtQuick.Controls.Basic
 import Lumen
 import Lumen.Backend
 

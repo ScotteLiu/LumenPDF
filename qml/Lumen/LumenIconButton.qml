@@ -56,44 +56,51 @@ T.Button {
         }
     }
 
-    // Hover tooltip -- delayed, so sweeping across the toolbar shows nothing.
-    Loader {
-        active: control.hovered && control.tooltip.length > 0
-        asynchronous: true
-        sourceComponent: Item {
-            Timer {
-                running: true
-                interval: 480
-                onTriggered: tip.opacity = 1.0
+    // Hover tooltip. Delayed, so sweeping the pointer across a toolbar shows
+    // nothing at all -- tooltips that appear instantly are noise.
+    Timer {
+        id: tipDelay
+        interval: 480
+        running: control.hovered && control.tooltip.length > 0
+    }
+
+    Squircle {
+        id: tip
+
+        y: control.height + Tokens.space2
+        x: (control.width - width) / 2
+        width: tipText.implicitWidth + Tokens.space3 * 2
+        height: tipText.implicitHeight + Tokens.space2
+        z: 100
+
+        visible: opacity > 0
+        opacity: 0   // the "shown" state below drives this
+        radius: Tokens.radiusSmall
+        fillColor: Tokens.surfaceElevated
+        strokeColor: Tokens.separator
+        strokeWidth: 1
+
+        states: State {
+            name: "shown"
+            when: control.hovered && control.tooltip.length > 0 && !tipDelay.running
+            PropertyChanges { tip.opacity: 1.0 }
+        }
+
+        transitions: Transition {
+            NumberAnimation {
+                property: "opacity"
+                duration: Motion.fast
+                easing.type: Easing.OutCubic
             }
+        }
 
-            Squircle {
-                id: tip
-                parent: control
-                y: control.height + Tokens.space2
-                x: (control.width - width) / 2
-                width: tipText.implicitWidth + Tokens.space3 * 2
-                height: tipText.implicitHeight + Tokens.space2
-                z: 100
-                opacity: 0
-                radius: Tokens.radiusSmall
-                fillColor: Tokens.surfaceElevated
-                strokeColor: Tokens.separator
-                strokeWidth: 1
-
-                Behavior on opacity {
-                    NumberAnimation { duration: Motion.fast; easing.type: Easing.OutCubic }
-                }
-
-                Text {
-                    id: tipText
-                    anchors.centerIn: parent
-                    text: control.tooltip
-                    font.family: Tokens.fontFamily
-                    font.pixelSize: Tokens.textSmall
-                    color: Tokens.textSecondary
-                }
-            }
+        Text {
+            id: tipText
+            anchors.centerIn: parent
+            text: control.tooltip
+            font.family: Tokens.fontFamily
+            font.pixelSize: Tokens.textSmall
+            color: Tokens.textSecondary
         }
     }
 }

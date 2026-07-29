@@ -28,7 +28,7 @@ int DocumentController::pageCount() const
     return (m_document && m_document->isValid()) ? m_document->pageCount() : 0;
 }
 
-QObject *DocumentController::pageModelObject() const
+QAbstractItemModel *DocumentController::pageModel() const
 {
     return m_pageModel;
 }

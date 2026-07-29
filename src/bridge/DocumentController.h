@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QAbstractItemModel>
 #include <QObject>
 #include <QSharedPointer>
 #include <QUrl>
@@ -20,7 +21,9 @@ class DocumentController : public QObject {
     Q_PROPERTY(QString filePath READ filePath NOTIFY documentChanged)
     Q_PROPERTY(int pageCount READ pageCount NOTIFY documentChanged)
     Q_PROPERTY(QString errorString READ errorString NOTIFY statusChanged)
-    Q_PROPERTY(QObject *pageModel READ pageModelObject CONSTANT)
+    // Typed as QAbstractItemModel* rather than QObject* so QML views accept it
+    // directly as a `model`.
+    Q_PROPERTY(QAbstractItemModel *pageModel READ pageModel CONSTANT)
 
 public:
     // Unscoped on purpose: QML reads these as DocumentStatus.Ready etc.
@@ -44,7 +47,7 @@ public:
     QString filePath() const { return m_filePath; }
     int pageCount() const;
     QString errorString() const { return m_errorString; }
-    QObject *pageModelObject() const;
+    QAbstractItemModel *pageModel() const;
 
     Q_INVOKABLE void open(const QUrl &url);
     Q_INVOKABLE void close();
