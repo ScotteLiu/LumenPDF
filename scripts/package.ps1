@@ -127,6 +127,11 @@ if (-not (Test-Path (Join-Path $stageDir "Qt6Core.dll"))) {
 $licenseDir = Join-Path $stageDir "LICENSES"
 New-Item -ItemType Directory -Force -Path $licenseDir | Out-Null
 
+$ownLicense = Join-Path $repoRoot "LICENSE"
+if (Test-Path $ownLicense) {
+    Copy-Item $ownLicense (Join-Path $stageDir "LICENSE.txt") -Force
+}
+
 $pdfiumLicense = Join-Path $repoRoot "third_party\pdfium\LICENSE"
 if (Test-Path $pdfiumLicense) {
     Copy-Item $pdfiumLicense (Join-Path $licenseDir "PDFium-LICENSE.txt") -Force

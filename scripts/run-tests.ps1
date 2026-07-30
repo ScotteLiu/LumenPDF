@@ -309,6 +309,58 @@ if (Start-Case "form-detection") {
     if ($r.ok) { Assert-Equal $false $r.report.hasForms "plain document is not" }
 }
 
+# -- Hostile input ----------------------------------------------------------
+#
+# The bar here is not "opens correctly" -- several of these cannot be opened at
+# all. It is that the app refuses them without crashing or hanging, and does not
+# let one crafted file dictate how much memory the process uses.
+
+if (Start-Case "hostile-input") {
+    & (Join-Path $PSScriptRoot "make-hostile-fixtures.ps1") | Out-Null
+    $hostileDir = Join-Path $fixtureDir "hostile"
+
+    # Files that cannot be a document, and must be reported as an error.
+    $mustRefuse = @("empty", "header-only", "not-a-pdf", "trailer-only", "truncated")
+
+    # Files that are damaged or malicious but that PDFium can still make sense
+    # of. They must open without hanging; how many pages they yield is PDFium's
+    # business, not something to pin down.
+    $mustSurvive = @("bad-startxref", "corrupted-body", "cyclic-outline",
+                     "recursive-pages", "huge-mediabox")
+
+    $peakMemory = 0
+
+    foreach ($stem in ($mustRefuse + $mustSurvive)) {
+        $path = Join-Path $hostileDir "$stem.pdf"
+        if (-not (Test-Path $path)) {
+            Assert-True $false "$stem.pdf was generated"
+            continue
+        }
+
+        $r = Invoke-Lumen -Pdf $path -Name "hostile-$stem"
+
+        if (-not $r.ok) {
+            Assert-True $false "$stem : survived without crashing ($($r.reason))"
+            continue
+        }
+
+        Assert-True $true "$stem : no crash, no hang"
+        $peakMemory = [math]::Max($peakMemory, $r.report.memoryMb)
+
+        # DocumentController::Status -- 2 is Ready, 3 is Error.
+        if ($mustRefuse -contains $stem) {
+            Assert-Equal 3 $r.report.status "$stem : refused with an error status"
+        } else {
+            Assert-Equal 2 $r.report.status "$stem : opened despite the damage"
+        }
+    }
+
+    # A crafted page declaring 200000 inches square once forced a single 268 MB
+    # raster. The render path now has a pixel budget; this is what holds it.
+    Assert-True ($peakMemory -lt 250) `
+        "no hostile file pushes memory past 250 MB (peak ${peakMemory} MB)"
+}
+
 # -- Summary ----------------------------------------------------------------
 foreach ($name in $hookNames) { Remove-Item "Env:$name" -ErrorAction SilentlyContinue }
 Remove-Item Env:LUMEN_REPORT -ErrorAction SilentlyContinue

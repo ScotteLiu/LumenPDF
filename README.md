@@ -125,9 +125,18 @@ that draws placeholder pages, which is enough to work on the UI.
 ./scripts/run-tests.ps1
 ```
 
-33 assertions, none of them a screenshot comparison. Fixtures are generated
+54 assertions, none of them a screenshot comparison. Fixtures are generated
 rather than committed — Latin and CJK samples by `src/app/TestFixtures.cpp`
-(QPdfWriter), the AcroForm sample by `scripts/make-form-fixture.ps1`.
+(QPdfWriter), the AcroForm sample by `scripts/make-form-fixture.ps1`, and ten
+deliberately broken files by `scripts/make-hostile-fixtures.ps1`.
+
+The hostile set is empty files, truncated downloads, corrupted bodies, an xref
+pointing past the end, a page tree containing itself, a self-referential
+outline, and a page declaring itself 200000 inches square. The bar is not that
+they open — five of them cannot — but that they are refused without crashing or
+hanging, and that no single crafted file dictates how much memory the process
+uses. That last one is a real fix: the huge-page case forced a 268 MB raster
+until the render path grew a pixel budget.
 
 The suite runs the app with `LUMEN_*` hooks, has it write a JSON state report
 through the same controllers the UI uses, and asserts on that. Redaction is the
@@ -170,9 +179,20 @@ problem, not an API call.
 
 ## Licensing
 
+LumenPDF itself is under the **Business Source License 1.1** — the source is
+public and readable, personal, academic and non-profit use is free, commercial
+use requires a licence, and on **2030-07-30** it converts automatically to
+Apache 2.0.
+
+That combination is deliberate. A tool that claims to redact documents is
+asking to be trusted with something irreversible, and "read the code yourself"
+is the only honest answer to that. Keeping it source-available rather than
+proprietary makes that answer possible without giving away the ability to sell
+it. If you want to use LumenPDF commercially, get in touch.
+
 | Component | Licence | Note |
 |---|---|---|
-| LumenPDF | TBD | |
+| LumenPDF | BSL 1.1 → Apache 2.0 on 2030-07-30 | Free for personal, academic and non-profit use. |
 | Qt 6 | LGPLv3 | **Dynamically linked.** Static linking would require a commercial Qt licence. |
 | PDFium | BSD-3-Clause | Safe for commercial distribution. |
 | Inter (planned) | SIL OFL 1.1 | Stands in for SF Pro, which cannot be redistributed. |

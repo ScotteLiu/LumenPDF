@@ -383,6 +383,18 @@ QImage PdfDocument::renderPage(int index, const QSize &pixelSize) const
     if (pixelSize.width() <= 0 || pixelSize.height() <= 0)
         return {};
 
+    // Total pixels, not just width. A page can declare any size it likes, and a
+    // crafted one declaring 200000 inches square drove a single raster to
+    // 268 MB even with the width already clamped -- the width guard alone does
+    // nothing about an extreme aspect ratio. 40 megapixels is far more than any
+    // real page at any usable zoom, and bounds what one hostile file can cost.
+    constexpr qint64 kMaxRenderPixels = 40LL * 1000 * 1000;
+    if (qint64(pixelSize.width()) * pixelSize.height() > kMaxRenderPixels) {
+        qCWarning(lcDoc) << "refusing to render page" << index
+                         << "at" << pixelSize << "-- over the pixel budget";
+        return {};
+    }
+
 #ifdef LUMEN_HAS_PDFIUM
     QMutexLocker locker(&m_mutex);
     if (!m_handle)

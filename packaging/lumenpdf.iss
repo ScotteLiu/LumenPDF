@@ -44,6 +44,10 @@ ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequiredOverridesAllowed=dialog
 PrivilegesRequired=lowest
 
+; Shown before installation. BSL is not a licence people have memorised, so it
+; has to be put in front of them rather than buried in a folder.
+LicenseFile=..\LICENSE
+
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
