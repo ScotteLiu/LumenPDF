@@ -44,7 +44,9 @@ function Add-Object([string]$body) {
 #    viewer treat the widgets as fillable rather than as flat annotations.
 $catalog = @"
 << /Type /Catalog /Pages 2 0 R
-   /AcroForm << /Fields [5 0 R 6 0 R 7 0 R] /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv 4 0 R >> >> >>
+   /AcroForm << /Fields [5 0 R 6 0 R 7 0 R] /DA (/Helv 0 Tf 0 g)
+                /DR << /Font << /Helv 4 0 R >> >>
+                /NeedAppearances true >>
 >>
 "@
 Add-Object $catalog | Out-Null

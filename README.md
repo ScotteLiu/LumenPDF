@@ -33,6 +33,11 @@ nothing left underneath to recover. That costs the page its selectable text, and
 the confirmation dialog says so rather than hiding it. Verified by extracting
 text from the saved file, not by looking at the black box.
 
+**Forms** — click a field and type. AcroForm text fields, checkboxes and radio
+buttons, filled through PDFium's form-fill environment and written back into the
+document. The cursor changes over a field, which is how anyone discovers a PDF
+is fillable at all.
+
 **Export and compression** — pages to PNG or JPEG at a chosen DPI, plain text,
 and a reduced copy that downsamples only images oversized relative to how large
 they are actually drawn.
@@ -110,14 +115,14 @@ else's machine, so it is not taken on trust.
 reorder pages, merge, split, save~~ ✅ **complete**
 
 **v1** — ~~installer~~ ✅ · ~~export (images, text)~~ ✅ · ~~true redaction~~ ✅ ·
-~~signatures~~ ✅ · ~~compression~~ ✅ · **form filling** and **text editing**
-remain.
+~~signatures~~ ✅ · ~~compression~~ ✅ · ~~form filling~~ ✅ · **text editing**
+remains.
 
-Both remaining items are subsystems rather than features. Form filling needs
-PDFium's form-fill environment wired into the render path and pointer/key input
-routed back into it; the test fixture it needs is already in place
-(`scripts/make-form-fixture.ps1`). Text editing changes the page view's input
-model outright.
+Text editing is the one genuinely open item. PDFium can replace a text object's
+string, but not split one, and in most real PDFs a text object is a whole line
+or paragraph — the same limitation that decided the redaction design. Editing a
+word therefore means re-laying out its whole run, which is a typesetting
+problem, not an API call.
 **v2** — OCR, batch processing, split-view comparison, AI summarisation.
 
 ## Licensing

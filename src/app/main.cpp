@@ -2,6 +2,7 @@
 #include "bridge/DocumentController.h"
 #include "bridge/OutlineModel.h"
 #include "bridge/ExportController.h"
+#include "bridge/FormController.h"
 #include "bridge/PageOperations.h"
 #include "bridge/RedactionController.h"
 #include "bridge/SearchController.h"
@@ -116,6 +117,9 @@ int main(int argc, char *argv[])
     qmlRegisterUncreatableType<lumen::AnnotationController>(
         "Lumen.Backend", 1, 0, "AnnotationType",
         QStringLiteral("Use Document.annotate"));
+    qmlRegisterUncreatableType<lumen::FormController>(
+        "Lumen.Backend", 1, 0, "FormFieldKind",
+        QStringLiteral("Use Document.forms"));
 
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed,
                      &app, []() { QCoreApplication::exit(-1); },
@@ -253,6 +257,43 @@ int main(int argc, char *argv[])
                              },
                              Qt::SingleShotConnection);
         }
+    }
+
+    // Test hook: fill a form field. "<page>,<x>,<y>,<text>" -- clicks at the
+    // point in PDF points, then types. Repeat the whole group with ';' between
+    // to fill several fields in one run.
+    if (qEnvironmentVariableIsSet("LUMEN_FORM_FILL")) {
+        const QStringList groups = qEnvironmentVariable("LUMEN_FORM_FILL").split(u';');
+        QObject::connect(controller, &lumen::DocumentController::documentChanged,
+                         controller, [controller, groups] {
+                             if (controller->pageCount() <= 0)
+                                 return;
+
+                             auto *forms = controller->forms();
+                             for (const QString &group : groups) {
+                                 const QStringList parts = group.split(u',');
+                                 if (parts.size() < 3)
+                                     continue;
+
+                                 const int page = parts.at(0).toInt();
+                                 const QPointF point(parts.at(1).toDouble(),
+                                                     parts.at(2).toDouble());
+
+                                 if (!forms->press(page, point, 0))
+                                     continue;
+                                 forms->release(page, point, 0);
+
+                                 if (parts.size() >= 4 && !parts.at(3).isEmpty())
+                                     forms->text(parts.at(3));
+                             }
+                             forms->clearFocus();
+
+                             if (qEnvironmentVariableIsSet("LUMEN_SAVE_AS")) {
+                                 controller->saveAs(QUrl::fromLocalFile(
+                                     qEnvironmentVariable("LUMEN_SAVE_AS")));
+                             }
+                         },
+                         Qt::SingleShotConnection);
     }
 
     installCaptureHook(engine);

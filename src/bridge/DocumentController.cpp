@@ -23,10 +23,13 @@ DocumentController::DocumentController(QObject *parent)
     , m_pageOps(new PageOperations(this))
     , m_exporter(new ExportController(this))
     , m_redact(new RedactionController(m_selection, this))
+    , m_forms(new FormController(this))
 {
-    // Redaction changes rendered content exactly like an annotation does, so it
-    // reuses the same invalidation path.
+    // Redaction and form editing both change rendered content exactly like an
+    // annotation does, so they reuse the same invalidation path.
     connect(m_redact, &RedactionController::pageInvalidated,
+            m_annotate, &AnnotationController::pageInvalidated);
+    connect(m_forms, &FormController::pageInvalidated,
             m_annotate, &AnnotationController::pageInvalidated);
 
     // Reordering, rotating or deleting a page changes both the page list and
@@ -149,6 +152,7 @@ void DocumentController::adoptDocument(const QSharedPointer<PdfDocument> &docume
     m_pageOps->setDocument(m_document);
     m_exporter->setDocument(m_document);
     m_redact->setDocument(m_document);
+    m_forms->setDocument(m_document);
 
     if (m_document && m_document->isValid()) {
         m_filePath = m_document->filePath();

@@ -5,6 +5,54 @@
 
 ---
 
+## 2026-07-30 — 表單填寫
+
+已驗證：點欄位 → 打字 → 勾核取方塊 → 存檔 → 全新行程重開，三個值都在。
+存檔後的檔案裡：`name = 'Scotte Liu'`、`email = 'liusg98@outlook.com'`、`agree = 'Yes'`。
+
+### 這個功能的全部困難都在同一件事上
+
+**PDFium 的頁面物件是按文件快取的。** 對同一頁索引呼叫 `FPDF_LoadPage`
+拿到的是**同一個底層頁面**，所以任何一次 `FPDF_ClosePage` 都會影響所有持有者。
+而 `FORM_OnBeforeClosePage` 正是 PDFium 銷毀該頁 widget 狀態（含焦點、含編輯中的值）
+的時機。
+
+這一條事實產生了三個依序出現的 bug，每一個都是「同一個錯誤的不同穿著」：
+
+**Bug 1：每個事件都 load/close 頁面 → 文字欄位永遠是空的。**
+點擊設定了焦點，但緊接著的 `FORM_OnBeforeClosePage` 就把焦點丟掉，
+所以下一次呼叫的打字送到「沒有焦點」的環境。核取方塊卻能用——因為它在單一
+press/release 內就完成，不跨呼叫。
+→ 改成把頁面在整個編輯期間保持載入（`acquireFormPage` / `releaseFormPage`）。
+
+**Bug 2：渲染路徑另外開了一個 handle 並在畫完後關閉 → 編輯中的焦點被畫面重繪殺掉。**
+`FPDF_FFLDraw` 需要 `FORM_OnAfterLoadPage`，但對**正在編輯的那一頁**絕對不能配對
+`FORM_OnBeforeClosePage`。
+→ 渲染時判斷是否為編輯中的頁面，是的話只畫不做配對。
+
+**Bug 3：`formFieldTypeAt()` 為了命中測試自己開一個 handle 再關掉 → 第二次點擊無法轉移焦點。**
+症狀是兩個欄位的文字全部跑進第一個欄位。
+→ 命中測試也走同一份快取頁面。
+
+**Bug 4（Bug 1 修好後才浮現）：PDFium 的 widget 用 hover 狀態決定 click 目標。**
+頁面持久化之後 hover 狀態也持久化了，所以每一次點擊都被送給「第一次 hover 到的」
+那個欄位。之前每個事件重新載入頁面時 hover 被重設，所以「剛好」是對的。
+→ 在 `FORM_OnLButtonDown` 之前先送一次 `FORM_OnMouseMove` 到同一個座標。
+
+### 其他
+
+- **`FPDF_SetFormFieldHighlightColor` 的位元組順序是 BGR**，不是標頭註解寫的
+  `0xxxrrggbb`。傳 `0x3E8FFF`（淺藍）畫出來是橘色。
+- **游標形狀是這個功能的發現機制**：文字上是 I-beam，欄位上是手指。
+  使用者是靠游標變化才知道一份 PDF 可以填。
+- 拖曳的歸屬在 **press 當下就決定並鎖住**：在欄位裡開始的拖曳不能中途變成文字選取。
+- 沒有實作閃爍游標。那需要一個 GUI 執行緒的 `QTimer` 回呼進 PDFium，
+  而不會閃的游標比那套機制出錯的代價小得多。`FFI_SetTimer` 回傳 0。
+- `FPDF_FORMFILLINFO` 沒有 user-data 欄位，但 PDFium 會把 struct 指標傳回每個回呼——
+  所以把它嵌成自訂 struct 的第一個成員再轉回來，跟 `FPDF_FILEWRITE` 同一招。
+
+---
+
 ## 2026-07-30 — 壓縮，以及表單的前置作業
 
 ### 壓縮

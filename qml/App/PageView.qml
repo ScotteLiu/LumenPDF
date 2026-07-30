@@ -104,6 +104,25 @@ Item {
         color: Tokens.canvas
     }
 
+    // Keyboard input for form fields. Focus lands here when a field is clicked,
+    // and everything unclaimed falls through to the window's shortcuts.
+    focus: true
+
+    Keys.onPressed: (event) => {
+        if (!Document.forms.editing)
+            return;
+
+        if (event.text.length > 0 && event.text.charCodeAt(0) >= 32) {
+            if (Document.forms.text(event.text)) {
+                event.accepted = true;
+                return;
+            }
+        }
+
+        if (Document.forms.key(event.key, event.modifiers))
+            event.accepted = true;
+    }
+
     ListView {
         id: pageList
 
@@ -279,7 +298,15 @@ Item {
                     id: textArea
                     anchors.fill: parent
                     acceptedButtons: Qt.LeftButton
-                    cursorShape: Qt.IBeamCursor
+                    hoverEnabled: Document.forms.hasForms
+
+                    // An I-beam over text, a hand over a form field: the cursor
+                    // is how the user discovers a PDF is fillable at all.
+                    cursorShape: hoveredField !== FormFieldKind.None
+                                 ? Qt.PointingHandCursor
+                                 : Qt.IBeamCursor
+
+                    property int hoveredField: FormFieldKind.None
 
                     // The ListView is a Flickable, and would otherwise steal
                     // the drag to scroll -- making text selection impossible
@@ -289,25 +316,67 @@ Item {
                     readonly property real toPoints:
                         pageSlot.widthPoints / pageSlot.pageWidth
 
+                    // Whether this press went to a form field. Held for the
+                    // duration of the drag so move and release go the same way
+                    // the press did -- a drag that begins in a field must not
+                    // turn into a text selection halfway through.
+                    property bool formDrag: false
+
                     function pointAt(mx, my) {
                         return Qt.point(mx * toPoints, my * toPoints);
                     }
 
-                    onPressed: (mouse) => {
-                        const p = pointAt(mouse.x, mouse.y);
-                        Document.selection.begin(pageSlot.index, p);
-                    }
-
                     onPositionChanged: (mouse) => {
-                        if (!pressed)
-                            return;
                         const p = pointAt(mouse.x, mouse.y);
+
+                        if (!pressed) {
+                            if (Document.forms.hasForms)
+                                hoveredField = Document.forms.fieldKindAt(pageSlot.index, p);
+                            return;
+                        }
+
+                        if (formDrag) {
+                            Document.forms.move(pageSlot.index, p, mouse.modifiers);
+                            return;
+                        }
+
                         Document.selection.extend(pageSlot.index, p);
                     }
 
-                    onReleased: Document.selection.end()
+                    onPressed: (mouse) => {
+                        const p = pointAt(mouse.x, mouse.y);
+
+                        // Forms get first refusal. press() returns false when
+                        // the point missed every field, and also commits any
+                        // field that was being edited.
+                        formDrag = Document.forms.hasForms
+                                && Document.forms.press(pageSlot.index, p, mouse.modifiers);
+
+                        if (formDrag) {
+                            // Keystrokes have to reach the page view for the
+                            // field to be typeable.
+                            root.forceActiveFocus();
+                            Document.selection.clear();
+                            return;
+                        }
+
+                        Document.selection.begin(pageSlot.index, p);
+                    }
+
+                    onReleased: (mouse) => {
+                        if (formDrag) {
+                            Document.forms.release(pageSlot.index,
+                                                  pointAt(mouse.x, mouse.y),
+                                                  mouse.modifiers);
+                            formDrag = false;
+                            return;
+                        }
+                        Document.selection.end();
+                    }
 
                     onDoubleClicked: (mouse) => {
+                        if (formDrag)
+                            return;
                         const p = pointAt(mouse.x, mouse.y);
                         Document.selection.selectWordAt(pageSlot.index, p);
                     }

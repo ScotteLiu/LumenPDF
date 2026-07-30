@@ -14,6 +14,8 @@
 #ifdef LUMEN_HAS_PDFIUM
 #include <fpdf_annot.h>
 #include <fpdf_doc.h>
+#include <fpdf_formfill.h>
+#include <fpdf_fwlevent.h>
 #include <fpdf_edit.h>
 #include <fpdf_ppo.h>
 #include <fpdf_save.h>
@@ -210,6 +212,7 @@ bool PdfDocument::load(const QString &filePath, const QString &password)
     m_lastError.clear();
 
     buildOutline();
+    initForms();
 
     qCInfo(lcDoc) << "opened" << filePath
                   << "pages:" << m_pages.size()
@@ -287,8 +290,11 @@ void PdfDocument::close()
 {
     QMutexLocker locker(&m_mutex);
 
-    // Before the document: these hold pages that belong to it.
+    // All of these hold references into the document and must go first, and the
+    // form page before the form environment that brackets it.
     releaseTextCache();
+    releaseFormPage();
+    closeForms();
 
 #ifdef LUMEN_HAS_PDFIUM
     if (m_handle) {
@@ -353,6 +359,30 @@ QImage PdfDocument::renderPage(int index, const QSize &pixelSize) const
         0, 0, pixelSize.width(), pixelSize.height(),
         0,
         FPDF_ANNOT | FPDF_LCD_TEXT);
+
+    // Form field widgets are drawn by the form-fill environment, not by the
+    // page renderer. Without this pass a fillable PDF renders with empty holes
+    // where its fields should be, and typing appears to do nothing.
+    //
+    // The page being edited must not be bracketed with
+    // FORM_OnAfterLoadPage/OnBeforeClosePage here: PDFium caches page objects
+    // per document, so this is the *same* page the editing session holds, and
+    // closing it would drop the focused field mid-render. Rendering the edited
+    // page therefore only draws; every other page gets the pair.
+    if (m_formHandle) {
+        auto form = static_cast<FPDF_FORMHANDLE>(m_formHandle);
+        const bool isEditedPage = (m_formPageIndex == index && m_formPage);
+
+        if (!isEditedPage)
+            FORM_OnAfterLoadPage(page, form);
+
+        FPDF_FFLDraw(form, bitmap, page,
+                     0, 0, pixelSize.width(), pixelSize.height(),
+                     0, FPDF_ANNOT | FPDF_LCD_TEXT);
+
+        if (!isEditedPage)
+            FORM_OnBeforeClosePage(page, form);
+    }
 
     FPDFBitmap_Destroy(bitmap);
     FPDF_ClosePage(page);
@@ -783,10 +813,12 @@ void PdfDocument::expandToLine(int pageIndex, int &start, int &count) const
 
 void PdfDocument::invalidatePage(int pageIndex)
 {
-    // Caller holds m_mutex. The cached text layer belongs to a page object
-    // that editing may have changed underneath it.
+    // Caller holds m_mutex. Both caches hold a page object that editing may
+    // have changed underneath them.
     if (m_textCacheIndex == pageIndex)
         releaseTextCache();
+    if (m_formPageIndex == pageIndex)
+        releaseFormPage();
 }
 
 bool PdfDocument::addTextMarkup(int pageIndex,
@@ -874,6 +906,386 @@ bool PdfDocument::addTextMarkup(int pageIndex,
     Q_UNUSED(type)
     Q_UNUSED(color)
     return false;
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// Forms
+// ---------------------------------------------------------------------------
+
+#ifdef LUMEN_HAS_PDFIUM
+namespace {
+
+// FPDF_FORMFILLINFO has no user-data field, but PDFium hands the struct pointer
+// back to every callback -- so the struct is embedded as the first member here
+// and the pointer is cast back. Same trick as FPDF_FILEWRITE above.
+struct FormHost {
+    FPDF_FORMFILLINFO base;
+    PdfDocument *owner;
+};
+
+// PDFium null-checks most of these before calling, but not consistently across
+// versions, and a missing callback is a crash rather than a degraded feature.
+// They are all provided, and the ones that would need real plumbing do nothing
+// on purpose -- see the notes.
+
+void ffiInvalidate(FPDF_FORMFILLINFO *, FPDF_PAGE, double, double, double, double)
+{
+    // Nothing to do: every input call reports whether PDFium consumed the
+    // event, and the caller redraws on that. Pushing invalidation through this
+    // callback would mean crossing threads for information we already have.
+}
+
+void ffiOutputSelectedRect(FPDF_FORMFILLINFO *, FPDF_PAGE, double, double, double, double) {}
+
+void ffiSetCursor(FPDF_FORMFILLINFO *, int) {}
+
+int ffiSetTimer(FPDF_FORMFILLINFO *, int, TimerCallback)
+{
+    // No timer, so the text caret does not blink. A blinking caret would need a
+    // QTimer owned by the GUI thread calling back into PDFium, and a still
+    // caret is a much smaller cost than that machinery going wrong.
+    return 0;
+}
+
+void ffiKillTimer(FPDF_FORMFILLINFO *, int) {}
+
+FPDF_SYSTEMTIME ffiGetLocalTime(FPDF_FORMFILLINFO *)
+{
+    // Only read by form JavaScript, which is not enabled.
+    return FPDF_SYSTEMTIME {};
+}
+
+void ffiOnChange(FPDF_FORMFILLINFO *pThis)
+{
+    if (auto *host = reinterpret_cast<FormHost *>(pThis))
+        host->owner->markModifiedByForm();
+}
+
+FPDF_PAGE ffiGetPage(FPDF_FORMFILLINFO *, FPDF_DOCUMENT, int) { return nullptr; }
+FPDF_PAGE ffiGetCurrentPage(FPDF_FORMFILLINFO *, FPDF_DOCUMENT) { return nullptr; }
+int ffiGetRotation(FPDF_FORMFILLINFO *, FPDF_PAGE) { return 0; }
+void ffiExecuteNamedAction(FPDF_FORMFILLINFO *, FPDF_BYTESTRING) {}
+void ffiSetTextFieldFocus(FPDF_FORMFILLINFO *, FPDF_WIDESTRING, FPDF_DWORD, FPDF_BOOL) {}
+void ffiDoURIAction(FPDF_FORMFILLINFO *, FPDF_BYTESTRING) {}
+void ffiDoGoToAction(FPDF_FORMFILLINFO *, int, int, float *, int) {}
+
+// Qt modifier bits to PDFium's.
+int toPdfiumModifiers(int qtModifiers)
+{
+    int flags = 0;
+    if (qtModifiers & Qt::ShiftModifier)
+        flags |= FWL_EVENTFLAG_ShiftKey;
+    if (qtModifiers & Qt::ControlModifier)
+        flags |= FWL_EVENTFLAG_ControlKey;
+    if (qtModifiers & Qt::AltModifier)
+        flags |= FWL_EVENTFLAG_AltKey;
+    return flags;
+}
+
+} // namespace
+#endif
+
+void PdfDocument::markModifiedByForm()
+{
+    // Called from inside a PDFium callback, so the mutex is already held by
+    // whichever method triggered it -- do not try to take it again.
+    m_modified = true;
+}
+
+void PdfDocument::initForms()
+{
+    // Caller holds m_mutex.
+#ifdef LUMEN_HAS_PDFIUM
+    if (!m_handle || m_formHandle)
+        return;
+
+    auto *host = new FormHost {};
+    host->owner = this;
+
+    host->base.version = 1;
+    host->base.FFI_Invalidate = &ffiInvalidate;
+    host->base.FFI_OutputSelectedRect = &ffiOutputSelectedRect;
+    host->base.FFI_SetCursor = &ffiSetCursor;
+    host->base.FFI_SetTimer = &ffiSetTimer;
+    host->base.FFI_KillTimer = &ffiKillTimer;
+    host->base.FFI_GetLocalTime = &ffiGetLocalTime;
+    host->base.FFI_OnChange = &ffiOnChange;
+    host->base.FFI_GetPage = &ffiGetPage;
+    host->base.FFI_GetCurrentPage = &ffiGetCurrentPage;
+    host->base.FFI_GetRotation = &ffiGetRotation;
+    host->base.FFI_ExecuteNamedAction = &ffiExecuteNamedAction;
+    host->base.FFI_SetTextFieldFocus = &ffiSetTextFieldFocus;
+    host->base.FFI_DoURIAction = &ffiDoURIAction;
+    host->base.FFI_DoGoToAction = &ffiDoGoToAction;
+
+    FPDF_FORMHANDLE handle = FPDFDOC_InitFormFillEnvironment(
+        static_cast<FPDF_DOCUMENT>(m_handle), &host->base);
+
+    if (!handle) {
+        delete host;
+        return;
+    }
+
+    m_formHost = host;
+    m_formHandle = handle;
+
+    // Widgets are drawn by PDFium, so it needs to know they are fillable and
+    // how to tint them. A faint blue wash reads as "you can type here" without
+    // fighting the document.
+    //
+    // The byte order is BGR, not the RGB the header's "0xxxrrggbb" wording
+    // suggests -- passing 0x3E8FFF produced orange on screen.
+    FPDF_SetFormFieldHighlightColor(handle, FPDF_FORMFIELD_UNKNOWN, 0xFF8F3E);
+    FPDF_SetFormFieldHighlightAlpha(handle, 38);
+
+    // PDFium wants to know the document has been opened before fields behave.
+    FORM_DoDocumentOpenAction(handle);
+
+    // Does this document have any fields at all? Checked once so the UI can
+    // stay entirely out of the way for the overwhelming majority of PDFs.
+    m_hasForms = false;
+    for (int i = 0; i < m_pages.size() && !m_hasForms; ++i) {
+        FPDF_PAGE page = FPDF_LoadPage(static_cast<FPDF_DOCUMENT>(m_handle), i);
+        if (!page)
+            continue;
+
+        const int annots = FPDFPage_GetAnnotCount(page);
+        for (int a = 0; a < annots; ++a) {
+            FPDF_ANNOTATION annot = FPDFPage_GetAnnot(page, a);
+            if (!annot)
+                continue;
+            if (FPDFAnnot_GetSubtype(annot) == FPDF_ANNOT_WIDGET)
+                m_hasForms = true;
+            FPDFPage_CloseAnnot(annot);
+            if (m_hasForms)
+                break;
+        }
+
+        FPDF_ClosePage(page);
+    }
+#endif
+}
+
+void PdfDocument::closeForms()
+{
+    // Caller holds m_mutex.
+#ifdef LUMEN_HAS_PDFIUM
+    if (m_formHandle) {
+        FPDFDOC_ExitFormFillEnvironment(static_cast<FPDF_FORMHANDLE>(m_formHandle));
+        m_formHandle = nullptr;
+    }
+    if (m_formHost) {
+        delete static_cast<FormHost *>(m_formHost);
+        m_formHost = nullptr;
+    }
+#endif
+    m_hasForms = false;
+}
+
+int PdfDocument::formFieldTypeAt(int pageIndex, const QPointF &point) const
+{
+    if (!m_valid || !m_hasForms || pageIndex < 0 || pageIndex >= m_pages.size())
+        return -1;
+
+#ifdef LUMEN_HAS_PDFIUM
+    QMutexLocker locker(&m_mutex);
+
+    // Via the cached form page, never a fresh handle. PDFium caches page
+    // objects per document, so loading and closing "another" handle for this
+    // index closes the very page the editing session is holding -- which resets
+    // the focused widget. That bug showed up as a second click failing to move
+    // focus, so both fields' text ended up in the first one.
+    auto page = static_cast<FPDF_PAGE>(acquireFormPage(pageIndex));
+    if (!page)
+        return -1;
+
+    const double pageHeight = m_pages.at(pageIndex).sizePoints.height();
+    return FPDFPage_HasFormFieldAtPoint(
+        static_cast<FPDF_FORMHANDLE>(m_formHandle), page,
+        point.x(), pageHeight - point.y());
+#else
+    Q_UNUSED(point)
+    return -1;
+#endif
+}
+
+void *PdfDocument::acquireFormPage(int pageIndex) const
+{
+    // Caller holds m_mutex.
+#ifdef LUMEN_HAS_PDFIUM
+    if (!m_handle || !m_formHandle)
+        return nullptr;
+
+    if (m_formPageIndex == pageIndex && m_formPage)
+        return m_formPage;
+
+    releaseFormPage();
+
+    FPDF_PAGE page = FPDF_LoadPage(static_cast<FPDF_DOCUMENT>(m_handle), pageIndex);
+    if (!page)
+        return nullptr;
+
+    FORM_OnAfterLoadPage(page, static_cast<FPDF_FORMHANDLE>(m_formHandle));
+
+    m_formPage = page;
+    m_formPageIndex = pageIndex;
+    return page;
+#else
+    Q_UNUSED(pageIndex)
+    return nullptr;
+#endif
+}
+
+void PdfDocument::releaseFormPage() const
+{
+    // Caller holds m_mutex.
+#ifdef LUMEN_HAS_PDFIUM
+    if (m_formPage) {
+        if (m_formHandle) {
+            // This is also the point at which PDFium writes a field's edited
+            // value back into the document, so it must not be skipped.
+            FORM_OnBeforeClosePage(static_cast<FPDF_PAGE>(m_formPage),
+                                   static_cast<FPDF_FORMHANDLE>(m_formHandle));
+        }
+        FPDF_ClosePage(static_cast<FPDF_PAGE>(m_formPage));
+        m_formPage = nullptr;
+    }
+#endif
+    m_formPageIndex = -1;
+}
+
+bool PdfDocument::formMousePress(int pageIndex, const QPointF &point, int modifiers)
+{
+    if (!m_valid || !m_hasForms || pageIndex < 0 || pageIndex >= m_pages.size())
+        return false;
+
+#ifdef LUMEN_HAS_PDFIUM
+    QMutexLocker locker(&m_mutex);
+    auto page = static_cast<FPDF_PAGE>(acquireFormPage(pageIndex));
+    if (!page)
+        return false;
+
+    const double pageHeight = m_pages.at(pageIndex).sizePoints.height();
+    const double userX = point.x();
+    const double userY = pageHeight - point.y();
+    auto form = static_cast<FPDF_FORMHANDLE>(m_formHandle);
+    const int flags = toPdfiumModifiers(modifiers);
+
+    // Move before pressing. PDFium's widgets resolve a click against whichever
+    // widget it currently considers hovered, and that state persists now that
+    // the page stays loaded. Without this, every click after the first is
+    // delivered to the field that was hovered first -- which showed up as two
+    // fields' worth of typing landing in one of them.
+    FORM_OnMouseMove(form, page, flags, userX, userY);
+
+    return FORM_OnLButtonDown(form, page, flags, userX, userY);
+#else
+    Q_UNUSED(point) Q_UNUSED(modifiers)
+    return false;
+#endif
+}
+
+bool PdfDocument::formMouseRelease(int pageIndex, const QPointF &point, int modifiers)
+{
+    if (!m_valid || !m_hasForms || pageIndex < 0 || pageIndex >= m_pages.size())
+        return false;
+
+#ifdef LUMEN_HAS_PDFIUM
+    QMutexLocker locker(&m_mutex);
+    auto page = static_cast<FPDF_PAGE>(acquireFormPage(pageIndex));
+    if (!page)
+        return false;
+
+    const double pageHeight = m_pages.at(pageIndex).sizePoints.height();
+    return FORM_OnLButtonUp(static_cast<FPDF_FORMHANDLE>(m_formHandle), page,
+                            toPdfiumModifiers(modifiers),
+                            point.x(), pageHeight - point.y());
+#else
+    Q_UNUSED(point) Q_UNUSED(modifiers)
+    return false;
+#endif
+}
+
+bool PdfDocument::formMouseMove(int pageIndex, const QPointF &point, int modifiers)
+{
+    if (!m_valid || !m_hasForms || pageIndex < 0 || pageIndex >= m_pages.size())
+        return false;
+
+#ifdef LUMEN_HAS_PDFIUM
+    QMutexLocker locker(&m_mutex);
+    auto page = static_cast<FPDF_PAGE>(acquireFormPage(pageIndex));
+    if (!page)
+        return false;
+
+    const double pageHeight = m_pages.at(pageIndex).sizePoints.height();
+    return FORM_OnMouseMove(static_cast<FPDF_FORMHANDLE>(m_formHandle), page,
+                            toPdfiumModifiers(modifiers),
+                            point.x(), pageHeight - point.y());
+#else
+    Q_UNUSED(point) Q_UNUSED(modifiers)
+    return false;
+#endif
+}
+
+bool PdfDocument::formKeyPress(int pageIndex, int pdfiumKeyCode, int modifiers)
+{
+    if (!m_valid || !m_hasForms || pageIndex < 0 || pageIndex >= m_pages.size())
+        return false;
+
+#ifdef LUMEN_HAS_PDFIUM
+    QMutexLocker locker(&m_mutex);
+    auto page = static_cast<FPDF_PAGE>(acquireFormPage(pageIndex));
+    if (!page)
+        return false;
+
+    return FORM_OnKeyDown(static_cast<FPDF_FORMHANDLE>(m_formHandle), page,
+                          pdfiumKeyCode, toPdfiumModifiers(modifiers));
+#else
+    Q_UNUSED(pdfiumKeyCode) Q_UNUSED(modifiers)
+    return false;
+#endif
+}
+
+bool PdfDocument::formTextInput(int pageIndex, const QString &text)
+{
+    if (!m_valid || !m_hasForms || text.isEmpty()
+        || pageIndex < 0 || pageIndex >= m_pages.size()) {
+        return false;
+    }
+
+#ifdef LUMEN_HAS_PDFIUM
+    QMutexLocker locker(&m_mutex);
+    auto page = static_cast<FPDF_PAGE>(acquireFormPage(pageIndex));
+    if (!page)
+        return false;
+
+    auto form = static_cast<FPDF_FORMHANDLE>(m_formHandle);
+
+    // One character at a time: FORM_OnChar takes a single codepoint, and typed
+    // text can be several.
+    bool any = false;
+    for (const QChar c : text) {
+        if (FORM_OnChar(form, page, c.unicode(), 0))
+            any = true;
+    }
+    return any;
+#else
+    return false;
+#endif
+}
+
+void PdfDocument::formClearFocus()
+{
+#ifdef LUMEN_HAS_PDFIUM
+    QMutexLocker locker(&m_mutex);
+    if (m_formHandle) {
+        FORM_ForceToKillFocus(static_cast<FPDF_FORMHANDLE>(m_formHandle));
+        // Releasing the page is what flushes the edited value into the
+        // document's field dictionaries. Without it the value lives only in
+        // PDFium's widget and never reaches the saved file.
+        releaseFormPage();
+    }
 #endif
 }
 

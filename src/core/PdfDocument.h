@@ -94,9 +94,35 @@ public:
 
     // Number of annotations on a page, and removal by index. Index is
     // PDFium's own ordering, which is what hit-testing returns.
-    // Number of AcroForm fields on a page. Used to decide whether the document
-    // needs the form-filling machinery at all.
+    // -- Forms ---------------------------------------------------------------
+    //
+    // AcroForm filling runs through PDFium's form-fill environment, which owns
+    // the field widgets' appearance and all their editing behaviour. Everything
+    // here is serialised by the same mutex as rendering, because the form
+    // environment and the document are one unit as far as PDFium is concerned.
+
+    // Number of AcroForm fields on a page.
     int formFieldCount(int pageIndex) const;
+
+    bool hasForms() const { return m_hasForms; }
+
+    // Field type under a point (PDF points, top-left origin), or -1 for none.
+    // The values are PDFium's FPDF_FORMFIELD_* constants.
+    int formFieldTypeAt(int pageIndex, const QPointF &point) const;
+
+    // Pointer and keyboard input, forwarded to the focused field. Each returns
+    // true when PDFium consumed the event, which is the caller's cue that the
+    // page needs redrawing.
+    bool formMousePress(int pageIndex, const QPointF &point, int modifiers);
+    bool formMouseRelease(int pageIndex, const QPointF &point, int modifiers);
+    bool formMouseMove(int pageIndex, const QPointF &point, int modifiers);
+    bool formKeyPress(int pageIndex, int pdfiumKeyCode, int modifiers);
+    bool formTextInput(int pageIndex, const QString &text);
+    void formClearFocus();
+
+    // Called from inside a PDFium form callback. Public only because the
+    // callback is a free function; not part of the intended API.
+    void markModifiedByForm();
 
     int annotationCount(int pageIndex) const;
     bool removeAnnotation(int pageIndex, int annotationIndex);
@@ -211,6 +237,21 @@ private:
     // Caller holds m_mutex.
     void rebuildPageInfo();
 
+    // Creates and destroys the form-fill environment. Caller holds m_mutex.
+    void initForms();
+    void closeForms();
+
+    // The page that currently holds form focus, kept loaded.
+    //
+    // FORM_OnAfterLoadPage / FORM_OnBeforeClosePage must bracket an entire
+    // editing session, not each event: closing the page destroys the widget
+    // state, including which field has focus. Bracketing per event means a
+    // click focuses a field and the very next keystroke arrives with nothing
+    // focused -- which is exactly the bug this cache exists to fix.
+    // Caller holds m_mutex.
+    void *acquireFormPage(int pageIndex) const;
+    void releaseFormPage() const;
+
     // Text extraction handles for the most recently touched page, kept open.
     //
     // Hit-testing runs on every mouse move during a drag; loading and closing
@@ -229,6 +270,13 @@ private:
     QVector<OutlineItem> m_outline;
 
     bool m_modified = false;
+
+    bool m_hasForms = false;
+    void *m_formHost = nullptr;    // FormHost, which wraps FPDF_FORMFILLINFO
+    void *m_formHandle = nullptr;  // FPDF_FORMHANDLE
+
+    mutable int m_formPageIndex = -1;
+    mutable void *m_formPage = nullptr;   // FPDF_PAGE
 
     mutable int m_textCacheIndex = -1;
     mutable void *m_textCachePage = nullptr;      // FPDF_PAGE
