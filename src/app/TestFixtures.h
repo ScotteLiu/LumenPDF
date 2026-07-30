@@ -25,8 +25,15 @@ bool writeLatinSample(const QString &filePath);
 // tofu would make the CJK tests meaningless rather than failing.
 bool writeCjkSample(const QString &filePath);
 
+// A deliberately long document, for measuring what happens at scale: page
+// layout, scroll performance, and memory when a viewer cannot possibly hold
+// every page. Text is minimal so the file stays small and the measurement is
+// about page count rather than content.
+bool writeLargeSample(const QString &filePath, int pageCount = 1000);
+
 // Writes every generated fixture into `directory`. Returns the number written.
-int writeAll(const QString &directory);
+// The large sample is skipped unless `includeLarge`, since it takes seconds.
+int writeAll(const QString &directory, bool includeLarge = false);
 
 } // namespace fixtures
 } // namespace lumen

@@ -1,8 +1,20 @@
 #include "platform/PlatformWindow.h"
 
+#include "app/Timing.h"
+
 #include <QFontDatabase>
 #include <QGuiApplication>
+#include <QLoggingCategory>
 #include <QWindow>
+
+#ifdef Q_OS_WIN
+// windows.h must come first: psapi.h uses its typedefs and does not include it.
+#include <windows.h>
+
+#include <psapi.h>
+#endif
+
+Q_LOGGING_CATEGORY(lcBench, "lumen.bench")
 
 #ifdef Q_OS_WIN
 #include <dwmapi.h>
@@ -63,6 +75,46 @@ QFont PlatformWindow::preferredUiFont()
 QString PlatformWindow::uiFontFamily() const
 {
     return QGuiApplication::font().family();
+}
+
+QString PlatformWindow::benchmark() const
+{
+    return qEnvironmentVariable("LUMEN_BENCH");
+}
+
+void PlatformWindow::markTiming(const QString &milestone)
+{
+    Timing::instance().mark(milestone);
+}
+
+void PlatformWindow::reportFrameRate(const QString &name, int frames, qreal seconds)
+{
+    if (seconds <= 0.0)
+        return;
+
+    const qreal fps = frames / seconds;
+    qCInfo(lcBench).nospace()
+        << "bench " << name << ": " << frames << " frames in "
+        << seconds << " s = " << qRound(fps * 10) / 10.0 << " fps, "
+        << qRound(memoryMegabytes()) << " MB";
+
+    m_benchmarkName = name;
+    m_benchmarkFps = fps;
+    m_benchmarkFrames = frames;
+}
+
+qreal PlatformWindow::memoryMegabytes() const
+{
+#ifdef Q_OS_WIN
+    PROCESS_MEMORY_COUNTERS counters {};
+    if (GetProcessMemoryInfo(GetCurrentProcess(), &counters, sizeof(counters)))
+        return qreal(counters.WorkingSetSize) / (1024.0 * 1024.0);
+    return 0.0;
+#else
+    // Left unimplemented rather than guessed at; the benchmark reports 0 and
+    // the harness can see that it is not a measurement.
+    return 0.0;
+#endif
 }
 
 int PlatformWindow::initialDark() const

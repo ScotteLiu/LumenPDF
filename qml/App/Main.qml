@@ -1,4 +1,4 @@
-﻿import QtQuick
+import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Dialogs
 import Lumen
@@ -572,6 +572,20 @@ ApplicationWindow {
             toast.show(qsTr("Redacted — %n page(s) flattened to an image", "",
                             pageCount));
         }
+    }
+
+    // Only exists when LUMEN_BENCH is set.
+    Loader {
+        active: Platform.benchmark.length > 0
+        sourceComponent: BenchmarkRunner { view: pageView }
+    }
+
+    // Time-to-first-page: the moment a rendered page raster is actually on
+    // screen, which is the number a user experiences as "how fast it opens".
+    // Only QML knows when that happened.
+    Connections {
+        target: pageView
+        function onFirstPageShown() { Platform.markTiming("first-page-visible") }
     }
 
     LumenToast {

@@ -24,6 +24,10 @@ class PlatformWindow : public QObject {
     // Driven by LUMEN_THEME=dark|light so both themes can be screenshotted.
     Q_PROPERTY(int initialDark READ initialDark CONSTANT)
 
+    // Benchmark to run instead of waiting for the user, from LUMEN_BENCH.
+    // Empty for a normal launch.
+    Q_PROPERTY(QString benchmark READ benchmark CONSTANT)
+
 public:
     explicit PlatformWindow(QObject *parent = nullptr);
 
@@ -33,10 +37,27 @@ public:
     // system face is used instead. Resolving once here means no component has
     // to carry a fallback chain, and a missing font degrades gracefully
     // rather than dropping the whole app onto a serif default.
+    // Last completed benchmark, for the state report. Empty name means none ran.
+    QString benchmarkName() const { return m_benchmarkName; }
+    qreal benchmarkFps() const { return m_benchmarkFps; }
+    int benchmarkFrames() const { return m_benchmarkFrames; }
+
     static QFont preferredUiFont();
     QString uiFontFamily() const;
     int initialSidebarTab() const;
     int initialDark() const;
+    QString benchmark() const;
+
+    // Records a milestone on the startup timeline from QML. The moment the
+    // first page raster is actually on screen can only be known up there.
+    Q_INVOKABLE void markTiming(const QString &milestone);
+
+    // Records a completed benchmark run so it lands in the state report.
+    Q_INVOKABLE void reportFrameRate(const QString &name, int frames, qreal seconds);
+
+    // Current process working set, in megabytes. Measured in-process because
+    // an external sample races with the thing it is measuring.
+    Q_INVOKABLE qreal memoryMegabytes() const;
 
     // Applies the acrylic/mica backdrop the sidebar and toolbar are designed
     // against. No-op where the platform has no equivalent.
@@ -44,6 +65,11 @@ public:
 
     // Matches the system title bar to the app theme.
     Q_INVOKABLE void setDarkTitleBar(QWindow *window, bool dark);
+
+private:
+    QString m_benchmarkName;
+    qreal m_benchmarkFps = 0.0;
+    int m_benchmarkFrames = 0;
 };
 
 } // namespace lumen

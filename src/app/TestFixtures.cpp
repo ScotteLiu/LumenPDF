@@ -149,7 +149,40 @@ bool writeCjkSample(const QString &filePath)
     return true;
 }
 
-int writeAll(const QString &directory)
+bool writeLargeSample(const QString &filePath, int pageCount)
+{
+    QScopedPointer<QPdfWriter> writer(makeWriter(filePath));
+    QPainter painter(writer.data());
+    if (!painter.isActive())
+        return false;
+
+    QFont body(QStringLiteral("Arial"), 11);
+    QFont heading(QStringLiteral("Arial"), 24, QFont::Bold);
+
+    const int pages = qBound(1, pageCount, 5000);
+
+    for (int page = 0; page < pages; ++page) {
+        if (page > 0)
+            writer->newPage();
+
+        painter.setFont(heading);
+        painter.drawText(QRect(72, 72, 450, 50), Qt::AlignLeft,
+                         QStringLiteral("Page %1").arg(page + 1));
+
+        painter.setFont(body);
+        for (int line = 0; line < 12; ++line) {
+            painter.drawText(QRect(72, 150 + line * 22, 450, 20), Qt::AlignLeft,
+                             QStringLiteral("Line %1 of page %2 -- filler text for layout.")
+                                 .arg(line + 1).arg(page + 1));
+        }
+    }
+
+    painter.end();
+    qCInfo(lcFixtures) << "wrote" << filePath << "with" << pages << "pages";
+    return true;
+}
+
+int writeAll(const QString &directory, bool includeLarge)
 {
     QDir dir(directory);
     if (!dir.exists() && !QDir().mkpath(directory)) {
@@ -161,6 +194,8 @@ int writeAll(const QString &directory)
     if (writeLatinSample(dir.filePath(QStringLiteral("latin-sample.pdf"))))
         ++written;
     if (writeCjkSample(dir.filePath(QStringLiteral("cjk-sample.pdf"))))
+        ++written;
+    if (includeLarge && writeLargeSample(dir.filePath(QStringLiteral("large-sample.pdf"))))
         ++written;
 
     return written;

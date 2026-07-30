@@ -1,5 +1,6 @@
 #include "app/StateReport.h"
 #include "app/TestFixtures.h"
+#include "app/Timing.h"
 #include "bridge/AnnotationController.h"
 #include "bridge/DocumentController.h"
 #include "bridge/OutlineModel.h"
@@ -32,7 +33,8 @@ namespace {
 //
 //   LUMEN_CAPTURE=work\ui-check\shot.png  LUMEN_CAPTURE_DELAY=3000  lumenpdf.exe file.pdf
 void installCaptureHook(QQmlApplicationEngine &engine,
-                        lumen::DocumentController *controller)
+                        lumen::DocumentController *controller,
+                        lumen::PlatformWindow *platform)
 {
     const QByteArray shotTarget = qgetenv("LUMEN_CAPTURE");
     const QByteArray reportTarget = qgetenv("LUMEN_REPORT");
@@ -43,14 +45,14 @@ void installCaptureHook(QQmlApplicationEngine &engine,
     const int delayMs = qEnvironmentVariableIntValue("LUMEN_CAPTURE_DELAY", &ok);
 
     QTimer::singleShot(ok && delayMs > 0 ? delayMs : 2500, &engine,
-                       [&engine, shotTarget, reportTarget, controller] {
+                       [&engine, shotTarget, reportTarget, controller, platform] {
         int exitCode = 0;
 
         // The state report comes first: it is what the tests assert on, and it
         // should still be written even if grabbing the window fails.
         if (!reportTarget.isEmpty()) {
             const QString path = QString::fromLocal8Bit(reportTarget);
-            if (lumen::report::write(path, controller)) {
+            if (lumen::report::write(path, controller, platform)) {
                 qInfo("report: wrote %s", qPrintable(path));
             } else {
                 qWarning("report: failed to write %s", qPrintable(path));
@@ -90,6 +92,10 @@ void installCaptureHook(QQmlApplicationEngine &engine,
 
 int main(int argc, char *argv[])
 {
+    // First statement in the program: everything after this is measured, and
+    // a startup number that quietly excludes part of startup is worthless.
+    lumen::Timing::instance().start();
+
     // Qt Quick needs the GPU pipeline chosen before the application exists.
     // D3D11 is the safe default on Windows; the backend gets revisited when
     // macOS (Metal) and Linux (Vulkan/OpenGL) come online.
@@ -103,7 +109,8 @@ int main(int argc, char *argv[])
     // so it runs and exits before anything else is set up.
     if (qEnvironmentVariableIsSet("LUMEN_MAKE_FIXTURES")) {
         const int written = lumen::fixtures::writeAll(
-            qEnvironmentVariable("LUMEN_MAKE_FIXTURES"));
+            qEnvironmentVariable("LUMEN_MAKE_FIXTURES"),
+            qEnvironmentVariableIsSet("LUMEN_MAKE_LARGE"));
         return written > 0 ? 0 : 1;
     }
 
@@ -114,9 +121,13 @@ int main(int argc, char *argv[])
     // Lumen ships its own component set; the built-in styles are never used.
     QQuickStyle::setStyle(QStringLiteral("Basic"));
 
+    lumen::Timing::instance().mark("qguiapplication-ready");
+
     lumen::PdfEngine::initialize();
+    lumen::Timing::instance().mark("pdfium-initialized");
 
     QGuiApplication::setFont(lumen::PlatformWindow::preferredUiFont());
+    lumen::Timing::instance().mark("font-resolved");
 
     // Scoped so the engine -- and with it every open document and every
     // worker thread holding one -- is destroyed *before* PDFium is torn down.
@@ -161,6 +172,7 @@ int main(int argc, char *argv[])
                      Qt::QueuedConnection);
 
     engine.loadFromModule("App", "Main");
+    lumen::Timing::instance().mark("qml-loaded");
 
     // Open a file passed on the command line (or by the shell's "Open with").
     const QStringList args = QGuiApplication::arguments();
@@ -347,7 +359,7 @@ int main(int argc, char *argv[])
                          Qt::SingleShotConnection);
     }
 
-    installCaptureHook(engine, controller);
+    installCaptureHook(engine, controller, platform);
 
     result = app.exec();
     }

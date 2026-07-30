@@ -10,6 +10,7 @@ qt_add_qml_module(App
         SearchPanel.qml
         SelectionToolbar.qml
         SignaturePad.qml
+        BenchmarkRunner.qml
         EmptyState.qml
 )
 

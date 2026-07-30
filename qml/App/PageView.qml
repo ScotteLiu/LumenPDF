@@ -32,6 +32,10 @@ Item {
     // times instead of once per frame, and cache hits survive small resizes.
     readonly property int _renderBucket: 128
 
+    // Emitted once, when the first page raster reaches the screen.
+    signal firstPageShown()
+    property bool _firstPageReported: false
+
     // rectsForPage() is a plain function call, so QML cannot know when its
     // answer changes. Bumping this counter is what re-evaluates the highlight
     // Repeaters -- cheaper and far more predictable than exposing one list
@@ -64,6 +68,20 @@ Item {
         const pointsWide = Document.pageWidthPoints(root.currentPage);
         if (pointsWide > 0)
             zoom = available / (pointsWide * 96 / 72);
+    }
+
+    // Advances the view by a distance in pixels, wrapping back to the top at
+    // the end. Used by the scroll benchmark, which needs to keep moving for
+    // longer than the document is tall.
+    function scrollBy(pixels) {
+        const maxY = Math.max(0, pageList.contentHeight - pageList.height);
+        if (maxY <= 0)
+            return;
+
+        let next = pageList.contentY + pixels;
+        if (next > maxY)
+            next = 0;
+        pageList.contentY = next;
     }
 
     // Scrolls to a page with an eased motion rather than teleporting.
@@ -209,6 +227,13 @@ Item {
                         NumberAnimation {
                             duration: Motion.normal
                             easing.type: Easing.OutCubic
+                        }
+                    }
+
+                    onStatusChanged: {
+                        if (status === Image.Ready && !root._firstPageReported) {
+                            root._firstPageReported = true;
+                            root.firstPageShown();
                         }
                     }
                 }

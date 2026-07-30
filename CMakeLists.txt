@@ -70,6 +70,8 @@ qt_add_executable(lumenpdf
     src/app/TestFixtures.cpp
     src/app/StateReport.h
     src/app/StateReport.cpp
+    src/app/Timing.h
+    src/app/Timing.cpp
 
     src/core/PdfTypes.h
     src/core/PdfDocument.h
