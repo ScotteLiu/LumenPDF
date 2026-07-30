@@ -1,0 +1,571 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LumenPDF — 快、乾淨、優雅的 PDF 編輯器</title>
+<meta name="description" content="用 C++ 與 Qt Quick 寫成的 PDF 檢視與編輯器。開 1000 頁和開 3 頁一樣快，捲動不掉幀，塗黑是真的移除文字。">
+
+<meta property="og:title" content="LumenPDF">
+<meta property="og:description" content="快、乾淨、優雅的 PDF 編輯器。開 1000 頁和開 3 頁一樣快。">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://scotteliu.github.io/LumenPDF/">
+<meta property="og:image" content="https://scotteliu.github.io/LumenPDF/img/reading.jpg">
+
+<style>
+/* The site uses the app's own design tokens, because a product page that looks
+   like a different product is a wasted first impression. */
+:root {
+  --accent:        #0A84FF;
+  --accent-soft:   rgba(10, 132, 255, 0.14);
+
+  --bg:            #141416;
+  --surface:       #1C1C1E;
+  --elevated:      #242426;
+
+  --text:          #F5F5F7;
+  --text-2:        #98989D;
+  --text-3:        #6C6C70;
+
+  --line:          rgba(255, 255, 255, 0.10);
+  --hover:         rgba(255, 255, 255, 0.06);
+
+  --radius-s:  10px;
+  --radius-m:  16px;
+  --radius-l:  22px;
+
+  --space-1: 4px;  --space-2: 8px;  --space-3: 12px;
+  --space-4: 16px; --space-5: 24px; --space-6: 32px;
+  --space-7: 48px; --space-8: 72px; --space-9: 112px;
+
+  --max: 1120px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg:       #FFFFFF;
+    --surface:  #F5F5F7;
+    --elevated: #FFFFFF;
+    --text:     #1D1D1F;
+    --text-2:   #6E6E73;
+    --text-3:   #A1A1A6;
+    --line:     rgba(0, 0, 0, 0.09);
+    --hover:    rgba(0, 0, 0, 0.05);
+    --accent:   #0071E3;
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: Inter, "Segoe UI Variable Text", "Segoe UI",
+               "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+  font-size: 17px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.wrap { max-width: var(--max); margin: 0 auto; padding: 0 var(--space-5); }
+
+h1, h2, h3 { line-height: 1.15; letter-spacing: -0.02em; margin: 0; }
+h1 { font-size: clamp(2.4rem, 6vw, 4rem); font-weight: 700; }
+h2 { font-size: clamp(1.7rem, 3.4vw, 2.4rem); font-weight: 650; }
+h3 { font-size: 1.12rem; font-weight: 600; letter-spacing: -0.01em; }
+p  { margin: 0; }
+
+a { color: inherit; }
+
+/* -- Language toggle ------------------------------------------------------
+   Both languages are in the markup and CSS hides one. Swapping textContent
+   with JS would mean re-escaping every piece of inline markup. */
+html[lang="zh"] .en { display: none; }
+html[lang="en"] .zh { display: none; }
+
+/* -- Nav ----------------------------------------------------------------- */
+nav {
+  position: sticky; top: 0; z-index: 50;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: saturate(180%) blur(18px);
+  border-bottom: 1px solid var(--line);
+}
+nav .wrap {
+  display: flex; align-items: center; gap: var(--space-4);
+  height: 56px;
+}
+.brand {
+  display: flex; align-items: center; gap: var(--space-2);
+  font-weight: 650; letter-spacing: -0.02em; text-decoration: none;
+  margin-right: auto;
+}
+.brand svg { width: 22px; height: 22px; }
+
+.nav-link {
+  color: var(--text-2); text-decoration: none; font-size: 0.94rem;
+  padding: 6px 10px; border-radius: var(--radius-s);
+  transition: color .14s ease, background .14s ease;
+}
+.nav-link:hover { color: var(--text); background: var(--hover); }
+
+.lang {
+  font: inherit; font-size: 0.85rem; color: var(--text-2);
+  background: var(--hover); border: 1px solid var(--line);
+  padding: 5px 11px; border-radius: 999px; cursor: pointer;
+  transition: color .14s ease, border-color .14s ease;
+}
+.lang:hover { color: var(--text); border-color: var(--accent); }
+
+/* -- Buttons ------------------------------------------------------------- */
+.btn {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  padding: 12px 22px; border-radius: var(--radius-s);
+  font-weight: 550; font-size: 0.98rem; text-decoration: none;
+  border: 1px solid transparent;
+  transition: transform .16s cubic-bezier(.32,.72,0,1),
+              background .16s ease, border-color .16s ease;
+}
+.btn:active { transform: scale(.975); }
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:hover { background: color-mix(in srgb, var(--accent) 88%, #000); }
+.btn-secondary { background: var(--elevated); border-color: var(--line); color: var(--text); }
+.btn-secondary:hover { border-color: var(--text-3); }
+
+/* -- Hero ---------------------------------------------------------------- */
+header { padding: var(--space-9) 0 var(--space-8); text-align: center; }
+.eyebrow {
+  display: inline-block; font-size: 0.82rem; font-weight: 550;
+  color: var(--accent); background: var(--accent-soft);
+  padding: 5px 13px; border-radius: 999px; margin-bottom: var(--space-5);
+}
+.lede {
+  font-size: clamp(1.05rem, 2.2vw, 1.28rem); color: var(--text-2);
+  max-width: 40rem; margin: var(--space-5) auto 0; text-wrap: pretty;
+}
+.cta { display: flex; gap: var(--space-3); justify-content: center;
+       margin-top: var(--space-6); flex-wrap: wrap; }
+.cta-note { font-size: 0.84rem; color: var(--text-3); margin-top: var(--space-3); }
+
+.shot {
+  margin: var(--space-8) auto 0; max-width: var(--max);
+  border-radius: var(--radius-l); overflow: hidden;
+  border: 1px solid var(--line);
+  box-shadow: 0 30px 80px -20px rgba(0,0,0,.55), 0 6px 20px rgba(0,0,0,.25);
+}
+.shot img { display: block; width: 100%; height: auto; }
+
+/* -- Numbers ------------------------------------------------------------- */
+.numbers {
+  display: grid; gap: var(--space-3);
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  margin: var(--space-8) 0;
+}
+.num {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius-m); padding: var(--space-5);
+}
+.num b {
+  display: block; font-size: 2rem; font-weight: 680;
+  letter-spacing: -0.03em; font-variant-numeric: tabular-nums;
+}
+.num span { display: block; color: var(--text-2); font-size: 0.9rem; margin-top: 2px; }
+
+/* -- Sections ------------------------------------------------------------ */
+section { padding: var(--space-8) 0; border-top: 1px solid var(--line); }
+.section-head { max-width: 46rem; margin-bottom: var(--space-7); }
+.section-head p { color: var(--text-2); margin-top: var(--space-3); text-wrap: pretty; }
+
+.grid {
+  display: grid; gap: var(--space-4);
+  grid-template-columns: repeat(auto-fit, minmax(268px, 1fr));
+}
+.card {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius-m); padding: var(--space-5);
+}
+.card h3 { margin-bottom: var(--space-2); }
+.card p { color: var(--text-2); font-size: 0.95rem; }
+.card svg { width: 22px; height: 22px; color: var(--accent); margin-bottom: var(--space-3); }
+
+.split {
+  display: grid; gap: var(--space-7); align-items: center;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+}
+@media (max-width: 860px) { .split { grid-template-columns: 1fr; } }
+.split img {
+  width: 100%; height: auto; display: block;
+  border-radius: var(--radius-m); border: 1px solid var(--line);
+  box-shadow: 0 20px 50px -18px rgba(0,0,0,.5);
+}
+.split p { color: var(--text-2); margin-top: var(--space-4); }
+
+.callout {
+  border-left: 3px solid var(--accent);
+  padding: var(--space-3) 0 var(--space-3) var(--space-5);
+  margin-top: var(--space-5);
+  color: var(--text-2); font-size: 0.95rem;
+}
+.callout strong { color: var(--text); font-weight: 600; }
+
+.note {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius-m); padding: var(--space-5) var(--space-6);
+}
+.note h3 { margin-bottom: var(--space-3); }
+.note p { color: var(--text-2); font-size: 0.95rem; }
+.note p + p { margin-top: var(--space-3); }
+
+code {
+  font-family: "JetBrains Mono", "Cascadia Mono", ui-monospace, monospace;
+  font-size: 0.88em; background: var(--hover);
+  padding: 2px 6px; border-radius: 6px;
+}
+
+.kbd {
+  font-family: inherit; font-size: 0.82em; color: var(--text-2);
+  border: 1px solid var(--line); border-bottom-width: 2px;
+  border-radius: 6px; padding: 1px 6px; background: var(--elevated);
+}
+
+/* -- Download ------------------------------------------------------------ */
+.download { text-align: center; }
+.download .grid { margin-top: var(--space-6); max-width: 720px; margin-inline: auto; }
+.dl {
+  display: block; text-decoration: none; text-align: left;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius-m); padding: var(--space-5);
+  transition: border-color .16s ease, transform .16s cubic-bezier(.32,.72,0,1);
+}
+.dl:hover { border-color: var(--accent); transform: translateY(-2px); }
+.dl b { display: block; font-weight: 600; }
+.dl span { display: block; color: var(--text-3); font-size: 0.86rem; margin-top: 4px; }
+
+footer {
+  border-top: 1px solid var(--line); padding: var(--space-7) 0;
+  color: var(--text-3); font-size: 0.88rem;
+}
+footer .wrap { display: flex; gap: var(--space-5); flex-wrap: wrap; align-items: center; }
+footer a { color: var(--text-2); text-decoration: none; }
+footer a:hover { color: var(--text); }
+footer .spacer { margin-left: auto; }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  * { transition: none !important; }
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="#top">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M6 3h8l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/>
+        <path d="M14 3v5h5"/><path d="M8.5 14.5h7"/><path d="M8.5 17.5h4"/>
+      </svg>
+      LumenPDF
+    </a>
+    <a class="nav-link" href="#features"><span class="zh">功能</span><span class="en">Features</span></a>
+    <a class="nav-link" href="#redaction"><span class="zh">塗黑</span><span class="en">Redaction</span></a>
+    <a class="nav-link" href="#download"><span class="zh">下載</span><span class="en">Download</span></a>
+    <a class="nav-link" href="https://github.com/ScotteLiu/LumenPDF">GitHub</a>
+    <button class="lang" id="lang" type="button">English</button>
+  </div>
+</nav>
+
+<header id="top">
+  <div class="wrap">
+    <span class="eyebrow">
+      <span class="zh">Windows · 免費個人使用 · 原始碼公開</span>
+      <span class="en">Windows · Free for personal use · Source available</span>
+    </span>
+
+    <h1>
+      <span class="zh">快、乾淨、優雅的<br>PDF 編輯器</span>
+      <span class="en">A fast, clean, elegant<br>PDF editor</span>
+    </h1>
+
+    <p class="lede">
+      <span class="zh">大部分 PDF 軟體只做到其中一件事。SumatraPDF 開得快但不能編輯，Acrobat 什麼都能做卻要等八秒。LumenPDF 想三件都要。</span>
+      <span class="en">Most PDF software picks one. SumatraPDF is instant but cannot edit. Acrobat does everything and takes eight seconds to show you a page. LumenPDF is an attempt at all three.</span>
+    </p>
+
+    <div class="cta">
+      <a class="btn btn-primary" href="#download">
+        <span class="zh">下載 Windows 版</span><span class="en">Download for Windows</span>
+      </a>
+      <a class="btn btn-secondary" href="https://github.com/ScotteLiu/LumenPDF">
+        <span class="zh">看原始碼</span><span class="en">Read the source</span>
+      </a>
+    </div>
+    <p class="cta-note">
+      <span class="zh">Windows 10/11 64 位元 · 安裝檔 41 MB</span>
+      <span class="en">Windows 10/11 64-bit · 41 MB installer</span>
+    </p>
+
+    <div class="shot">
+      <img src="img/reading.jpg" width="1600" height="1050"
+           alt="LumenPDF 開啟一份論文，側欄顯示頁面縮圖，內文有一段黃色螢光標記">
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="numbers">
+    <div class="num"><b>287<small>ms</small></b>
+      <span class="zh">第一頁出現在螢幕上</span><span class="en">to first page on screen</span></div>
+    <div class="num"><b>527<small>ms</small></b>
+      <span class="zh">開啟 1000 頁文件</span><span class="en">to open a 1000-page file</span></div>
+    <div class="num"><b>144<small>fps</small></b>
+      <span class="zh">捲動 1000 頁不掉幀</span><span class="en">scrolling, no dropped frames</span></div>
+    <div class="num"><b>145<small>MB</small></b>
+      <span class="zh">1000 頁文件的記憶體</span><span class="en">memory, 1000-page file</span></div>
+  </div>
+</div>
+
+<section id="speed">
+  <div class="wrap">
+    <div class="section-head">
+      <h2><span class="zh">速度是量出來的，不是講出來的</span><span class="en">Speed, measured rather than claimed</span></h2>
+      <p>
+        <span class="zh">開 1000 頁的文件和開 3 頁的文件，成本幾乎一樣：527 ms 對 536 ms。頁面幾何在開檔時一次算好，渲染完全虛擬化，所以頁數不影響開啟成本。</span>
+        <span class="en">Opening a 1000-page document costs the same as opening a 3-page one: 527 ms against 536 ms. Page geometry is cached once at load and rendering is fully virtualised, so page count never enters the opening cost.</span>
+      </p>
+    </div>
+
+    <div class="callout">
+      <span class="zh"><strong>數字怎麼來的：</strong>倉庫裡有 <code>scripts/benchmark.ps1</code>，跑 5 次取中位數，你可以自己跑一遍。測試機為 RTX 4090、143 Hz、3840×2160。頁面渲染在背景執行緒，GUI 執行緒從不接觸 PDFium——這是捲動不掉幀的原因。</span>
+      <span class="en"><strong>Where the numbers come from:</strong> <code>scripts/benchmark.ps1</code> is in the repository — 5 runs, median, run it yourself. Measured on an RTX 4090 at 143 Hz, 3840×2160. Pages rasterise on a worker pool and the GUI thread never touches PDFium, which is why scrolling holds vsync.</span>
+    </div>
+  </div>
+</section>
+
+<section id="features">
+  <div class="wrap">
+    <div class="section-head">
+      <h2><span class="zh">該有的都有</span><span class="en">Everything you need</span></h2>
+      <p>
+        <span class="zh">閱讀、標註、整理頁面、填表單、匯出、壓縮。全部可復原，全部有回歸測試守著。</span>
+        <span class="en">Reading, annotating, page management, forms, export, compression. All undoable, all covered by regression tests.</span>
+      </p>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+        <h3><span class="zh">全文搜尋</span><span class="en">Full-text search</span></h3>
+        <p><span class="zh">245 頁、1028 個命中，130 毫秒。結果邊掃邊出現，掃完之前就能用。</span>
+           <span class="en">1028 matches across 245 pages in 130 ms. Results stream in while the scan is still running.</span></p>
+      </div>
+
+      <div class="card">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M4 6h3M10 6h10M4 12h3M10 12h10M4 18h3M10 18h10"/></svg>
+        <h3><span class="zh">大綱與縮圖</span><span class="en">Outline and thumbnails</span></h3>
+        <p><span class="zh">可折疊的文件大綱，縮圖側欄可直接旋轉、刪除、匯出單頁。</span>
+           <span class="en">A collapsible outline, and a thumbnail rail where you can rotate, delete or export a page directly.</span></p>
+      </div>
+
+      <div class="card">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M7 4v7a5 5 0 0 0 10 0V4"/><path d="M5 20h14"/></svg>
+        <h3><span class="zh">標註</span><span class="en">Annotations</span></h3>
+        <p><span class="zh">螢光標記、底線、刪除線，四種顏色。寫出的是標準 PDF 標註，別的軟體讀得到。</span>
+           <span class="en">Highlight, underline and strike-through in four colours, written as standards-conformant PDF markup other software reads.</span></p>
+      </div>
+
+      <div class="card">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M3 17c3.5 0 4-11 7-11s1.5 9 4 9 2.5-4 4-4 2 2 3 2"/><path d="M4 21h16"/></svg>
+        <h3><span class="zh">手寫簽名</span><span class="en">Signatures</span></h3>
+        <p><span class="zh">直接畫，存成向量路徑而不是點陣圖——放大到 800% 依然銳利。</span>
+           <span class="en">Draw it. Stamped as vector paths rather than a bitmap, so it stays sharp at any zoom.</span></p>
+      </div>
+
+      <div class="card">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><rect x="3" y="4" width="18" height="7" rx="1"/><path d="M3 15h11M3 19h7"/></svg>
+        <h3><span class="zh">表單填寫</span><span class="en">Form filling</span></h3>
+        <p><span class="zh">點欄位就能打字，文字欄位、核取方塊、單選鈕都支援，存回檔案。</span>
+           <span class="en">Click a field and type — text fields, checkboxes and radio buttons, written back into the document.</span></p>
+      </div>
+
+      <div class="card">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M4 4h16v16H4z"/><path d="M3 16l4.5-4.5 3 3L14 11l7 5"/></svg>
+        <h3><span class="zh">匯出與壓縮</span><span class="en">Export and compress</span></h3>
+        <p><span class="zh">頁面轉圖片、純文字匯出，以及只降取樣「畫得太小卻放太大張」的圖片。</span>
+           <span class="en">Pages to images, plain text, and a reduced copy that downsamples only images oversized relative to how large they are drawn.</span></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="redaction">
+  <div class="wrap">
+    <div class="split">
+      <div>
+        <h2><span class="zh">塗黑是真的把文字刪掉</span><span class="en">Redaction that actually redacts</span></h2>
+        <p>
+          <span class="zh">在黑框底下留著文字是最常見的洩密方式——只要複製貼上就露餡。LumenPDF 不是畫黑框，是把該頁點陣化後替換掉，底下什麼都不剩。</span>
+          <span class="en">A black rectangle drawn over text leaves the text in the file for anyone who copies it out. That is how redaction failures make the news. LumenPDF rasterises the page and replaces its contents, so there is nothing underneath to recover.</span>
+        </p>
+        <div class="callout">
+          <span class="zh"><strong>代價我們也說清楚：</strong>被塗黑的那一頁會失去可選取的文字，確認對話框直接寫明這件事。一個安全工具如果會讓你意外，它就不值得信任。驗證方式不是看截圖，是把存檔後的檔案重新抽取文字——該頁從 4731 個位元組變成 <strong>0</strong>，其他頁一字未動。</span>
+          <span class="en"><strong>And the cost is stated:</strong> the affected page loses its selectable text, and the confirmation dialog says so. A security tool that surprises you is not trustworthy. It is verified by extracting text from the saved file, not by looking at the black box: the page goes from 4731 bytes to <strong>zero</strong> while every other page stays intact.</span>
+        </div>
+      </div>
+      <img src="img/redaction.jpg" width="1600" height="1050"
+           alt="一頁論文，摘要中的數行被實心黑框覆蓋，頁面其餘部分完好">
+    </div>
+  </div>
+</section>
+
+<section id="cjk">
+  <div class="wrap">
+    <div class="split">
+      <img src="img/search.jpg" width="1600" height="1050"
+           alt="搜尋面板列出多筆命中，頁面上對應文字以藍色標示">
+      <div>
+        <h2><span class="zh">中日韓文字是一等公民</span><span class="en">CJK is a first-class case</span></h2>
+        <p>
+          <span class="zh">很多 PDF 工具在中文上會出現一種難以察覺的錯誤：複製出來的字看起來對，貼到別處卻搜不到——因為抽出的是「康熙部首」區塊的碼位，不是正規漢字。</span>
+          <span class="en">Many PDF tools have a failure mode in Chinese that is almost impossible to notice: copied text looks right but matches nothing when pasted, because what was extracted are Kangxi-radical lookalikes rather than the real ideographs.</span>
+        </p>
+        <div class="callout">
+          <span class="zh">LumenPDF 會把它們正規化回真正的漢字。搜尋單一個中文字有效，雙擊選字選的是一個字而不是一整行。<strong>這四件事以前全是壞的</strong>——現在每一項都有回歸測試守著。</span>
+          <span class="en">LumenPDF normalises them back. Searching for a single ideograph works, and double-clicking selects one character rather than the whole line. <strong>All four of those were real bugs</strong>, and each now has a regression test.</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="honest">
+  <div class="wrap">
+    <div class="section-head">
+      <h2><span class="zh">做不到的，我們也寫出來</span><span class="en">What it does not do</span></h2>
+      <p>
+        <span class="zh">產品頁通常只講好話。這一段講限制，因為你遲早會遇到。</span>
+        <span class="en">Product pages usually only list wins. This one lists the limits, because you will meet them eventually.</span>
+      </p>
+    </div>
+
+    <div class="grid">
+      <div class="note">
+        <h3><span class="zh">文字編輯是「修正」，不是排版</span><span class="en">Text editing corrects, it does not typeset</span></h3>
+        <p><span class="zh">按 <span class="kbd">Ctrl</span>+<span class="kbd">E</span> 可以點一段文字直接改。但真實 PDF 幾乎都是子集嵌入字型——只含文件用過的字符。輸入字型裡沒有的字，底層會產生亂碼。</span>
+           <span class="en">Press <span class="kbd">Ctrl</span>+<span class="kbd">E</span> and click a run to edit it. But real PDFs embed font subsets containing only the glyphs already used, so typing a character the font lacks produces garbage underneath.</span></p>
+        <p><span class="zh">所以每一次編輯都會讀回來驗證，不通過就還原並告訴你原因。<strong>毀掉你的文件卻回報成功，比拒絕一次編輯糟糕得多。</strong>適合改錯字、換數字、調標籤。</span>
+           <span class="en">So every edit is read back and verified, and one that does not survive is rolled back with an explanation. <strong>Corrupting your document and reporting success is far worse than refusing.</strong> Good for typos, numbers and labels.</span></p>
+      </div>
+
+      <div class="note">
+        <h3><span class="zh">目前只有 Windows</span><span class="en">Windows only, for now</span></h3>
+        <p><span class="zh">macOS 和 Linux 在規劃中。所有平台相關的程式碼從第一天就隔離在一個檔案裡，圖形後端也只在一個地方選擇——但「能編譯」和「能用」是兩回事，所以還沒承諾時程。</span>
+           <span class="en">macOS and Linux are planned. Every platform-specific call has been confined to one file since day one and the graphics backend is chosen in one place — but compiling and shipping are different things, so there is no date.</span></p>
+      </div>
+
+      <div class="note">
+        <h3><span class="zh">還沒有 OCR</span><span class="en">No OCR yet</span></h3>
+        <p><span class="zh">掃描檔可以開、可以標註、可以整理頁面，但沒有文字層就搜不到內容。OCR 排在下一階段。</span>
+           <span class="en">Scanned documents open, annotate and reorganise fine, but without a text layer there is nothing to search. OCR is next.</span></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="craft">
+  <div class="wrap">
+    <div class="split">
+      <div>
+        <h2><span class="zh">介面是自己畫的</span><span class="en">The interface is hand-built</span></h2>
+        <p>
+          <span class="zh">沒有用任何現成的 UI 主題。圓角是連續曲率的 squircle 而不是圓弧接直線；直接操作用彈簧曲線，狀態變化用減速曲線，沒有任何線性動畫；圖示是向量路徑，任何解析度都銳利。</span>
+          <span class="en">No off-the-shelf UI theme. Corners are continuous-curvature squircles rather than a circular arc meeting a straight edge. Direct manipulation moves on a spring, state changes ease out, and nothing is linear. Icons are vector paths, crisp at any DPI.</span>
+        </p>
+        <div class="callout">
+          <span class="zh">深色與淺色都是一等公民，切換時連原生標題列一起跟著換。<strong>這些細節單獨看都很小，加起來就是「順手」和「將就」的差別。</strong></span>
+          <span class="en">Dark and light are both first-class, and switching takes the native title bar with it. <strong>Individually these are small; together they are the difference between an app that feels right and one you put up with.</strong></span>
+        </div>
+      </div>
+      <img src="img/light.jpg" width="1600" height="1050"
+           alt="淺色主題下的 LumenPDF，選取文字上方浮出操作列，含複製與四色螢光筆">
+    </div>
+  </div>
+</section>
+
+<section id="download" class="download">
+  <div class="wrap">
+    <h2><span class="zh">下載</span><span class="en">Download</span></h2>
+    <p class="lede">
+      <span class="zh">Windows 10 或 11，64 位元。安裝程式不會搶走 PDF 的預設開啟方式——它只是出現在「開啟檔案」清單裡，由你選。</span>
+      <span class="en">Windows 10 or 11, 64-bit. The installer does not seize the .pdf default association — it simply appears in "Open with" and lets you choose.</span>
+    </p>
+
+    <div class="grid">
+      <a class="dl" href="https://github.com/ScotteLiu/LumenPDF/releases/latest">
+        <b><span class="zh">安裝程式</span><span class="en">Installer</span></b>
+        <span class="zh">LumenPDF-0.1.0-win64-setup.exe · 41 MB</span>
+        <span class="en">LumenPDF-0.1.0-win64-setup.exe · 41 MB</span>
+      </a>
+      <a class="dl" href="https://github.com/ScotteLiu/LumenPDF/releases/latest">
+        <b><span class="zh">免安裝版</span><span class="en">Portable</span></b>
+        <span class="zh">解壓縮就能跑 · 48 MB</span>
+        <span class="en">Unzip and run · 48 MB</span>
+      </a>
+    </div>
+
+    <p class="cta-note" style="margin-top: var(--space-6)">
+      <span class="zh">個人、學術與非營利使用免費。商業使用需要授權——<a href="https://github.com/ScotteLiu/LumenPDF/blob/main/LICENSE" style="color:var(--accent)">BSL 1.1</a>，2030 年 7 月 30 日自動轉為 Apache 2.0。</span>
+      <span class="en">Free for personal, academic and non-profit use. Commercial use requires a licence — <a href="https://github.com/ScotteLiu/LumenPDF/blob/main/LICENSE" style="color:var(--accent)">BSL 1.1</a>, converting to Apache 2.0 on 30 July 2030.</span>
+    </p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>© 2026 Scotte Liu</span>
+    <a href="https://github.com/ScotteLiu/LumenPDF">GitHub</a>
+    <a href="https://github.com/ScotteLiu/LumenPDF/blob/main/docs/DEVLOG.md">
+      <span class="zh">開發日誌</span><span class="en">Engineering log</span>
+    </a>
+    <a href="https://github.com/ScotteLiu/LumenPDF/issues">
+      <span class="zh">回報問題</span><span class="en">Issues</span>
+    </a>
+    <span class="spacer">
+      <span class="zh">以 Qt 6 (LGPLv3) 與 PDFium (BSD) 建構</span>
+      <span class="en">Built with Qt 6 (LGPLv3) and PDFium (BSD)</span>
+    </span>
+  </div>
+</footer>
+
+<script>
+// Language preference, remembered. Defaults to Chinese, but follows the
+// browser when it clearly prefers English.
+(function () {
+  var button = document.getElementById('lang');
+  var root = document.documentElement;
+
+  var stored = null;
+  try { stored = localStorage.getItem('lumenpdf-lang'); } catch (e) {}
+
+  var initial = stored
+    || ((navigator.language || '').toLowerCase().indexOf('zh') === 0 ? 'zh' : 'en');
+
+  function apply(lang) {
+    root.setAttribute('lang', lang);
+    button.textContent = lang === 'zh' ? 'English' : '中文';
+    try { localStorage.setItem('lumenpdf-lang', lang); } catch (e) {}
+  }
+
+  apply(initial);
+  button.addEventListener('click', function () {
+    apply(root.getAttribute('lang') === 'zh' ? 'en' : 'zh');
+  });
+})();
+</script>
+
+</body>
+</html>
