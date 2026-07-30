@@ -20,6 +20,10 @@ class PlatformWindow : public QObject {
     // input events. -1 when unset, which means "leave the default alone".
     Q_PROPERTY(int initialSidebarTab READ initialSidebarTab CONSTANT)
 
+    // Which theme to start in: 1 dark, 0 light, -1 leave the default alone.
+    // Driven by LUMEN_THEME=dark|light so both themes can be screenshotted.
+    Q_PROPERTY(int initialDark READ initialDark CONSTANT)
+
 public:
     explicit PlatformWindow(QObject *parent = nullptr);
 
@@ -32,6 +36,7 @@ public:
     static QFont preferredUiFont();
     QString uiFontFamily() const;
     int initialSidebarTab() const;
+    int initialDark() const;
 
     // Applies the acrylic/mica backdrop the sidebar and toolbar are designed
     // against. No-op where the platform has no equivalent.

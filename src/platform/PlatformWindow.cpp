@@ -65,6 +65,16 @@ QString PlatformWindow::uiFontFamily() const
     return QGuiApplication::font().family();
 }
 
+int PlatformWindow::initialDark() const
+{
+    const QString theme = qEnvironmentVariable("LUMEN_THEME").toLower();
+    if (theme == QLatin1String("light"))
+        return 0;
+    if (theme == QLatin1String("dark"))
+        return 1;
+    return -1;
+}
+
 int PlatformWindow::initialSidebarTab() const
 {
     if (!qEnvironmentVariableIsSet("LUMEN_SIDEBAR_TAB"))

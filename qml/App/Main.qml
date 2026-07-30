@@ -18,7 +18,22 @@ ApplicationWindow {
 
     color: Tokens.canvas
 
-    Component.onCompleted: Platform.applyBackdrop(window, Tokens.dark)
+    Component.onCompleted: {
+        if (Platform.initialDark >= 0)
+            Tokens.dark = Platform.initialDark === 1;
+        Platform.applyBackdrop(window, Tokens.dark);
+    }
+
+    // The native title bar and window backdrop are not QML, so they have to be
+    // told when the theme changes -- otherwise toggling leaves a dark title bar
+    // sitting on top of a light window.
+    Connections {
+        target: Tokens
+        function onDarkChanged() {
+            Platform.applyBackdrop(window, Tokens.dark);
+            Platform.setDarkTitleBar(window, Tokens.dark);
+        }
+    }
 
     onActiveChanged: if (active) Platform.setDarkTitleBar(window, Tokens.dark)
 

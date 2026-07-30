@@ -25,7 +25,10 @@ QtObject {
     readonly property color background:      dark ? "#1C1C1E" : "#FFFFFF"
     readonly property color surface:         dark ? "#242426" : "#F5F5F7"
     readonly property color surfaceElevated: dark ? "#2C2C2E" : "#FFFFFF"
-    readonly property color canvas:          dark ? "#141416" : "#E8E8ED"  // behind the pages
+    // Behind the pages. In light mode this has to be clearly darker than paper
+    // white or the sheet stops reading as a sheet -- the page edge is what
+    // tells the eye where the document is.
+    readonly property color canvas:          dark ? "#141416" : "#DCDCE1"
 
     readonly property color textPrimary:     dark ? "#F5F5F7" : "#1D1D1F"
     readonly property color textSecondary:   dark ? "#98989D" : "#6E6E73"
@@ -37,7 +40,7 @@ QtObject {
     readonly property color pressOverlay:    dark ? Qt.rgba(1, 1, 1, 0.12) : Qt.rgba(0, 0, 0, 0.09)
     readonly property color scrim:           dark ? Qt.rgba(0, 0, 0, 0.55) : Qt.rgba(0, 0, 0, 0.28)
 
-    readonly property color shadow:          dark ? Qt.rgba(0, 0, 0, 0.55) : Qt.rgba(0, 0, 0, 0.18)
+    readonly property color shadow:          dark ? Qt.rgba(0, 0, 0, 0.55) : Qt.rgba(0, 0, 0, 0.26)
 
     // -- Spacing (8pt grid) ------------------------------------------------
     readonly property int space1: 4

@@ -76,6 +76,23 @@ cmake --build --preset windows-release
 The app also builds without PDFium present — it falls back to a stub renderer
 that draws placeholder pages, which is enough to work on the UI.
 
+### Packaging
+
+```powershell
+./scripts/package.ps1
+```
+
+Produces `build/dist/LumenPDF-<version>-win64-portable.zip` and
+`build/dist/LumenPDF-<version>-win64-setup.exe` (the installer step needs
+`winget install JRSoftware.InnoSetup`).
+
+Packaging stages a self-contained directory, prunes what this build cannot use
+— the software OpenGL fallback, the DXIL compiler, and five unused Qt Quick
+Controls styles, ~110 MB in total — and then **launches the pruned copy and
+requires it to render a page** before writing either artefact. Pruning is the
+step most likely to produce a package that builds cleanly and dies on someone
+else's machine, so it is not taken on trust.
+
 ## Roadmap
 
 **MVP** — ~~open, render, scroll, zoom, search, thumbnails, outline, annotate,
