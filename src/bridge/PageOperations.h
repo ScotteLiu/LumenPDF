@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QSharedPointer>
+#include <QUrl>
 #include <QVector>
 
 namespace lumen {
@@ -37,6 +38,16 @@ public:
     Q_INVOKABLE bool move(int from, int to);
     Q_INVOKABLE bool remove(int pageIndex);
 
+    // Appends every page of another PDF. Undoable.
+    Q_INVOKABLE bool mergeFrom(const QUrl &url);
+
+    // Inserts every page of another PDF at a position. Undoable.
+    Q_INVOKABLE bool insertFrom(const QUrl &url, int atIndex);
+
+    // Writes pages out to a new file. Does not modify this document, so it is
+    // not on the undo stack. `lastPage` is inclusive.
+    Q_INVOKABLE bool extractTo(const QUrl &url, int firstPage, int lastPage);
+
     Q_INVOKABLE bool undo();
     Q_INVOKABLE bool redo();
 
@@ -44,6 +55,9 @@ public:
 
 signals:
     void stackChanged();
+    void failed(const QString &reason);
+    void extracted(const QString &filePath, int pageCount);
+    void merged(const QString &filePath, int pageCount);
 
     // The page count or ordering changed; every model over this document has
     // to be reset, and every cached raster is stale.
@@ -54,9 +68,14 @@ signals:
 
 private:
     struct Command {
-        enum Kind { Rotate, Move, Delete } kind;
-        int a = 0;          // rotate: page   move: from   delete: page
-        int b = 0;          // rotate: turns  move: to     delete: stash index
+        enum Kind { Rotate, Move, Delete, Insert } kind = Rotate;
+        int a = 0;          // rotate: page   move: from   delete: page   insert: at
+        int b = 0;          // rotate: turns  move: to     delete: stash   insert: count
+
+        // Insert only. The source document is held open for the lifetime of
+        // the command so redo re-imports exactly what was imported the first
+        // time, even if the file on disk has since changed or gone away.
+        QSharedPointer<PdfDocument> source;
     };
 
     // Takes a mutable reference: deleting writes back where the page was

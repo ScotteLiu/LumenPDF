@@ -13,6 +13,7 @@ Item {
 
     property int currentIndex: 0
     signal pageRequested(int index)
+    signal exportRequested(int index)
 
     readonly property int thumbWidth: 132
 
@@ -146,6 +147,14 @@ Item {
                     implicitWidth: 26
                     implicitHeight: 26
                     onClicked: Document.pages.rotate(index, 1)
+                }
+
+                LumenIconButton {
+                    iconPath: Icons.extract
+                    tooltip: qsTr("Export this page…")
+                    implicitWidth: 26
+                    implicitHeight: 26
+                    onClicked: root.exportRequested(index)
                 }
 
                 LumenIconButton {

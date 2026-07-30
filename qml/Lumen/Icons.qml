@@ -41,6 +41,9 @@ QtObject {
     readonly property string rotateLeft:  "M4 8h9a6 6 0 1 1 0 12H8 M4 8l4-4 M4 8l4 4"
     readonly property string rotateRight: "M20 8h-9a6 6 0 1 0 0 12h5 M20 8l-4-4 M20 8l-4 4"
     readonly property string trash:       "M4 7h16 M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2 M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12 M10 11v6 M14 11v6"
+    readonly property string merge:       "M8 3H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3 M12 8h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-7a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2z"
+    readonly property string extract:     "M6 20a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h7l5 5v3 M13 2v5h5 M14 17h7 M18 14l3 3-3 3"
+
     readonly property string undo:        "M4 9h11a5 5 0 0 1 0 10H9 M4 9l4-4 M4 9l4 4"
     readonly property string redo:        "M20 9H9a5 5 0 0 0 0 10h6 M20 9l-4-4 M20 9l-4 4"
 

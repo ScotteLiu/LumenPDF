@@ -1197,6 +1197,79 @@ bool PdfDocument::insertPageFrom(const PdfDocument &source, int sourceIndex, int
 #endif
 }
 
+int PdfDocument::insertPagesFrom(const PdfDocument &source,
+                                 const QString &pageRange,
+                                 int atIndex)
+{
+    if (!m_valid)
+        return -1;
+
+#ifdef LUMEN_HAS_PDFIUM
+    QMutexLocker locker(&m_mutex);
+    if (!m_handle || !source.m_handle)
+        return -1;
+
+    releaseTextCache();
+
+    const int before = FPDF_GetPageCount(static_cast<FPDF_DOCUMENT>(m_handle));
+    const int target = qBound(0, atIndex, before);
+
+    // A null range means "every page"; PDFium treats it that way explicitly,
+    // which saves building "1-N" and getting the off-by-one wrong.
+    const QByteArray range = pageRange.toLatin1();
+
+    if (!FPDF_ImportPages(static_cast<FPDF_DOCUMENT>(m_handle),
+                          static_cast<FPDF_DOCUMENT>(source.m_handle),
+                          pageRange.isEmpty() ? nullptr : range.constData(),
+                          target)) {
+        return -1;
+    }
+
+    const int after = FPDF_GetPageCount(static_cast<FPDF_DOCUMENT>(m_handle));
+
+    rebuildPageInfo();
+    buildOutline();
+
+    m_modified = true;
+    return after - before;
+#else
+    Q_UNUSED(source)
+    Q_UNUSED(pageRange)
+    Q_UNUSED(atIndex)
+    return -1;
+#endif
+}
+
+bool PdfDocument::deletePageRange(int start, int count)
+{
+    if (!m_valid || count <= 0 || start < 0 || start + count > m_pages.size())
+        return false;
+
+    // Same rule as deletePage: never leave a zero-page document behind.
+    if (m_pages.size() - count < 1)
+        return false;
+
+#ifdef LUMEN_HAS_PDFIUM
+    QMutexLocker locker(&m_mutex);
+    if (!m_handle)
+        return false;
+
+    releaseTextCache();
+
+    // Back to front, so each deletion cannot shift the indices still to come.
+    for (int i = start + count - 1; i >= start; --i)
+        FPDFPage_Delete(static_cast<FPDF_DOCUMENT>(m_handle), i);
+
+    rebuildPageInfo();
+    buildOutline();
+
+    m_modified = true;
+    return true;
+#else
+    return false;
+#endif
+}
+
 #ifdef LUMEN_HAS_PDFIUM
 namespace {
 
@@ -1273,6 +1346,63 @@ bool PdfDocument::saveAs(const QString &filePath)
     return true;
 #else
     Q_UNUSED(filePath)
+    return false;
+#endif
+}
+
+bool PdfDocument::extractPagesTo(const QString &filePath, const QString &pageRange) const
+{
+    if (!m_valid || filePath.isEmpty())
+        return false;
+
+#ifdef LUMEN_HAS_PDFIUM
+    QMutexLocker locker(&m_mutex);
+    if (!m_handle)
+        return false;
+
+    // Build a fresh document holding only the wanted pages, then write that.
+    // Copying out is the only safe direction: filtering in place would mean
+    // deleting from the document the user still has open.
+    FPDF_DOCUMENT out = FPDF_CreateNewDocument();
+    if (!out)
+        return false;
+
+    const QByteArray range = pageRange.toLatin1();
+    const bool imported = FPDF_ImportPages(out,
+                                           static_cast<FPDF_DOCUMENT>(m_handle),
+                                           pageRange.isEmpty() ? nullptr : range.constData(),
+                                           0);
+
+    if (!imported || FPDF_GetPageCount(out) == 0) {
+        FPDF_CloseDocument(out);
+        return false;
+    }
+
+    QFile file(filePath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        FPDF_CloseDocument(out);
+        return false;
+    }
+
+    FileWriter writer {};
+    writer.base.version = 1;
+    writer.base.WriteBlock = &FileWriter::write;
+    writer.file = &file;
+    writer.failed = false;
+
+    const bool ok = FPDF_SaveAsCopy(out, &writer.base, 0);
+
+    file.close();
+    FPDF_CloseDocument(out);
+
+    if (!ok || writer.failed) {
+        file.remove();
+        return false;
+    }
+
+    return true;
+#else
+    Q_UNUSED(pageRange)
     return false;
 #endif
 }

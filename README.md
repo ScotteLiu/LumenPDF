@@ -22,8 +22,9 @@ text flow, including across columns and across pages. Copy to clipboard.
 
 **Editing** — highlight, underline and strike-through in four colours, applied
 from a floating bar that appears over the selection. Rotate, reorder and delete
-pages, all undoable. Save, with the annotations written as standards-conformant
-PDF markup that other PDF software reads.
+pages. Append another PDF, or export any page as its own file. Everything that
+modifies the document is undoable. Save, with the annotations written as
+standards-conformant PDF markup that other PDF software reads.
 
 ---
 
@@ -78,8 +79,9 @@ that draws placeholder pages, which is enough to work on the UI.
 ## Roadmap
 
 **MVP** — ~~open, render, scroll, zoom, search, thumbnails, outline, annotate,
-reorder pages, save~~ ✅ · merge and split remain.
-**v1** — text editing, forms, signatures, true redaction, compression, export.
+reorder pages, merge, split, save~~ ✅ **complete**
+**v1** — text editing, forms, signatures, true redaction, compression, export,
+installer.
 **v2** — OCR, batch processing, split-view comparison, AI summarisation.
 
 ## Licensing

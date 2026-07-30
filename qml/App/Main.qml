@@ -84,6 +84,40 @@ ApplicationWindow {
     }
 
     FileDialog {
+        id: mergeDialog
+        title: qsTr("Append PDF")
+        nameFilters: [qsTr("PDF documents (*.pdf)")]
+        onAccepted: Document.pages.mergeFrom(selectedFile)
+    }
+
+    // Which page an extract applies to is decided when the dialog opens, not
+    // when it closes -- the user could scroll while the dialog is up.
+    property int extractPage: -1
+
+    FileDialog {
+        id: extractDialog
+        title: qsTr("Export Page As")
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "pdf"
+        nameFilters: [qsTr("PDF documents (*.pdf)")]
+        onAccepted: {
+            if (window.extractPage >= 0)
+                Document.pages.extractTo(selectedFile, window.extractPage, window.extractPage);
+        }
+    }
+
+    Connections {
+        target: Document.pages
+        function onFailed(reason) { toast.show(reason, true) }
+        function onExtracted(filePath, pageCount) {
+            toast.show(qsTr("Exported %n page(s)", "", pageCount));
+        }
+        function onMerged(filePath, pageCount) {
+            toast.show(qsTr("Added %n page(s)", "", pageCount));
+        }
+    }
+
+    FileDialog {
         id: saveDialog
         title: qsTr("Save PDF As")
         fileMode: FileDialog.SaveFile
@@ -138,6 +172,14 @@ ApplicationWindow {
             active: Document.modified
             anchors.verticalCenter: parent.verticalCenter
             onClicked: Document.save()
+        }
+
+        LumenIconButton {
+            iconPath: Icons.merge
+            tooltip: qsTr("Append another PDF…")
+            enabled: Document.status === DocumentStatus.Ready
+            anchors.verticalCenter: parent.verticalCenter
+            onClicked: mergeDialog.open()
         }
 
         Item { width: Tokens.space3; height: 1 }
@@ -293,6 +335,10 @@ ApplicationWindow {
                 anchors.fill: parent
                 currentIndex: pageView.currentPage
                 onPageRequested: (index) => pageView.goToPage(index)
+                onExportRequested: (index) => {
+                    window.extractPage = index;
+                    extractDialog.open();
+                }
                 opacity: sidebar.tab === 0 ? 1 : 0
                 visible: opacity > 0
                 Behavior on opacity { NumberAnimation { duration: Motion.fast } }

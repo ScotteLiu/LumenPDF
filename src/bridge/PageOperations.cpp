@@ -2,6 +2,7 @@
 
 #include "core/PdfDocument.h"
 
+#include <QFileInfo>
 #include <QLoggingCategory>
 
 Q_LOGGING_CATEGORY(lcPageOps, "lumen.pageops")
@@ -37,6 +38,7 @@ QString PageOperations::undoLabel() const
     case Command::Rotate: return tr("Undo Rotate Page");
     case Command::Move:   return tr("Undo Move Page");
     case Command::Delete: return tr("Undo Delete Page");
+    case Command::Insert: return tr("Undo Insert Pages");
     }
     return tr("Undo");
 }
@@ -50,6 +52,7 @@ QString PageOperations::redoLabel() const
     case Command::Rotate: return tr("Redo Rotate Page");
     case Command::Move:   return tr("Redo Move Page");
     case Command::Delete: return tr("Redo Delete Page");
+    case Command::Insert: return tr("Redo Insert Pages");
     }
     return tr("Redo");
 }
@@ -100,6 +103,19 @@ bool PageOperations::apply(Command &command)
         emit structureChanged();
         return true;
     }
+
+    case Command::Insert: {
+        if (!command.source)
+            return false;
+
+        const int inserted = m_document->insertPagesFrom(*command.source, {}, command.a);
+        if (inserted <= 0)
+            return false;
+
+        command.b = inserted;
+        emit structureChanged();
+        return true;
+    }
     }
 
     return false;
@@ -128,6 +144,16 @@ bool PageOperations::revert(const Command &command)
         if (!m_stash || command.b < 0)
             return false;
         if (!m_document->insertPageFrom(*m_stash, command.b, command.a))
+            return false;
+        emit structureChanged();
+        return true;
+
+    case Command::Insert:
+        // No stash needed: redo can re-import from the source document, which
+        // the command keeps alive precisely for that reason.
+        if (command.b <= 0)
+            return false;
+        if (!m_document->deletePageRange(command.a, command.b))
             return false;
         emit structureChanged();
         return true;
@@ -166,6 +192,94 @@ bool PageOperations::remove(int pageIndex)
     return true;
 }
 
+bool PageOperations::mergeFrom(const QUrl &url)
+{
+    if (!m_document || !m_document->isValid())
+        return false;
+    return insertFrom(url, m_document->pageCount());
+}
+
+bool PageOperations::insertFrom(const QUrl &url, int atIndex)
+{
+    if (!m_document || !m_document->isValid()) {
+        emit failed(tr("No document is open."));
+        return false;
+    }
+
+    const QString path = url.isLocalFile() ? url.toLocalFile() : url.toString();
+    if (path.isEmpty()) {
+        emit failed(tr("No file given."));
+        return false;
+    }
+
+    if (QFileInfo(path) == QFileInfo(m_document->filePath())) {
+        // Importing a document into itself would work, but almost nobody means
+        // it, and the result is a silently doubled file.
+        emit failed(tr("That is the document already open."));
+        return false;
+    }
+
+    auto source = QSharedPointer<PdfDocument>::create();
+    if (!source->load(path)) {
+        emit failed(source->lastError().isEmpty()
+                    ? tr("Could not open %1").arg(QFileInfo(path).fileName())
+                    : source->lastError());
+        return false;
+    }
+
+    Command command;
+    command.kind = Command::Insert;
+    command.a = qBound(0, atIndex, m_document->pageCount());
+    command.b = 0;
+    command.source = source;
+
+    if (!apply(command)) {
+        emit failed(tr("Could not insert pages from %1").arg(QFileInfo(path).fileName()));
+        return false;
+    }
+
+    push(command);
+    qCInfo(lcPageOps) << "inserted" << command.b << "pages from" << path
+                      << "at" << command.a;
+    emit merged(path, command.b);
+    return true;
+}
+
+bool PageOperations::extractTo(const QUrl &url, int firstPage, int lastPage)
+{
+    if (!m_document || !m_document->isValid()) {
+        emit failed(tr("No document is open."));
+        return false;
+    }
+
+    QString path = url.isLocalFile() ? url.toLocalFile() : url.toString();
+    if (path.isEmpty()) {
+        emit failed(tr("No destination given."));
+        return false;
+    }
+    if (!path.endsWith(QStringLiteral(".pdf"), Qt::CaseInsensitive))
+        path += QStringLiteral(".pdf");
+
+    const int total = m_document->pageCount();
+    const int from = qBound(0, firstPage, total - 1);
+    const int to = qBound(from, lastPage, total - 1);
+
+    // PDFium's range syntax is 1-based and inclusive.
+    const QString range = (from == to)
+        ? QString::number(from + 1)
+        : QStringLiteral("%1-%2").arg(from + 1).arg(to + 1);
+
+    if (!m_document->extractPagesTo(path, range)) {
+        emit failed(tr("Could not write %1").arg(QFileInfo(path).fileName()));
+        return false;
+    }
+
+    const int count = to - from + 1;
+    qCInfo(lcPageOps) << "extracted pages" << range << "to" << path;
+    emit extracted(path, count);
+    return true;
+}
+
 bool PageOperations::undo()
 {
     if (!canUndo())
@@ -177,6 +291,9 @@ bool PageOperations::undo()
 
     --m_position;
     emit stackChanged();
+
+    qCInfo(lcPageOps) << "undo" << int(command.kind)
+                      << "-> pageCount" << m_document->pageCount();
     return true;
 }
 
@@ -192,6 +309,9 @@ bool PageOperations::redo()
     m_commands[m_position] = command;   // Delete rewrites its stash index
     ++m_position;
     emit stackChanged();
+
+    qCInfo(lcPageOps) << "redo" << int(command.kind)
+                      << "-> pageCount" << m_document->pageCount();
     return true;
 }
 

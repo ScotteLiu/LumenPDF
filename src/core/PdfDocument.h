@@ -118,6 +118,21 @@ public:
     // Copies one page out of `source` and inserts it at `atIndex`.
     bool insertPageFrom(const PdfDocument &source, int sourceIndex, int atIndex);
 
+    // Copies pages out of `source` and inserts them at `atIndex`.
+    //
+    // `pageRange` uses PDFium's 1-based syntax ("1,3-5"); empty means every
+    // page. Returns how many pages were inserted, or -1 on failure.
+    int insertPagesFrom(const PdfDocument &source,
+                        const QString &pageRange,
+                        int atIndex);
+
+    // Deletes a contiguous run without stashing it. Used to undo an insert,
+    // where the pages can be re-imported from the source instead.
+    bool deletePageRange(int start, int count);
+
+    // Writes selected pages out as a new document. Does not modify this one.
+    bool extractPagesTo(const QString &filePath, const QString &pageRange) const;
+
     // An empty in-memory document, used as the holding area for deleted pages.
     static QSharedPointer<PdfDocument> createScratch();
 

@@ -202,6 +202,14 @@ int main(int argc, char *argv[])
                              else if (op == QLatin1String("move") && parts.size() >= 3)
                                  pages->move(parts.at(1).toInt(), parts.at(2).toInt());
 
+                             else if (op == QLatin1String("merge") && parts.size() >= 2)
+                                 pages->mergeFrom(QUrl::fromLocalFile(parts.at(1)));
+                             else if (op == QLatin1String("extract") && parts.size() >= 3)
+                                 pages->extractTo(QUrl::fromLocalFile(parts.at(1)),
+                                                  parts.at(2).toInt(),
+                                                  parts.size() >= 4 ? parts.at(3).toInt()
+                                                                    : parts.at(2).toInt());
+
                              if (parts.contains(QLatin1String("undo")))
                                  pages->undo();
                          },
