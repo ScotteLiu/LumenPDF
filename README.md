@@ -22,9 +22,20 @@ text flow, including across columns and across pages. Copy to clipboard.
 
 **Editing** — highlight, underline and strike-through in four colours, applied
 from a floating bar that appears over the selection. Rotate, reorder and delete
-pages. Append another PDF, or export any page as its own file. Everything that
-modifies the document is undoable. Save, with the annotations written as
+pages. Append another PDF, or export any page as its own file. Sign by drawing,
+stamped as vector paths rather than a bitmap. Everything that modifies the
+document is undoable. Save, with the annotations written as
 standards-conformant PDF markup that other PDF software reads.
+
+**Redaction that actually redacts** — the selected text is destroyed, not
+covered. The affected page is rasterised and its objects replaced, so there is
+nothing left underneath to recover. That costs the page its selectable text, and
+the confirmation dialog says so rather than hiding it. Verified by extracting
+text from the saved file, not by looking at the black box.
+
+**Export and compression** — pages to PNG or JPEG at a chosen DPI, plain text,
+and a reduced copy that downsamples only images oversized relative to how large
+they are actually drawn.
 
 ---
 
@@ -97,8 +108,16 @@ else's machine, so it is not taken on trust.
 
 **MVP** — ~~open, render, scroll, zoom, search, thumbnails, outline, annotate,
 reorder pages, merge, split, save~~ ✅ **complete**
-**v1** — text editing, forms, signatures, true redaction, compression, export,
-installer.
+
+**v1** — ~~installer~~ ✅ · ~~export (images, text)~~ ✅ · ~~true redaction~~ ✅ ·
+~~signatures~~ ✅ · ~~compression~~ ✅ · **form filling** and **text editing**
+remain.
+
+Both remaining items are subsystems rather than features. Form filling needs
+PDFium's form-fill environment wired into the render path and pointer/key input
+routed back into it; the test fixture it needs is already in place
+(`scripts/make-form-fixture.ps1`). Text editing changes the page view's input
+model outright.
 **v2** — OCR, batch processing, split-view comparison, AI summarisation.
 
 ## Licensing

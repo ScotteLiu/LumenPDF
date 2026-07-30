@@ -877,6 +877,38 @@ bool PdfDocument::addTextMarkup(int pageIndex,
 #endif
 }
 
+int PdfDocument::formFieldCount(int pageIndex) const
+{
+    if (!m_valid || pageIndex < 0 || pageIndex >= m_pages.size())
+        return 0;
+
+#ifdef LUMEN_HAS_PDFIUM
+    QMutexLocker locker(&m_mutex);
+    if (!m_handle)
+        return 0;
+
+    FPDF_PAGE page = FPDF_LoadPage(static_cast<FPDF_DOCUMENT>(m_handle), pageIndex);
+    if (!page)
+        return 0;
+
+    int fields = 0;
+    const int count = FPDFPage_GetAnnotCount(page);
+    for (int i = 0; i < count; ++i) {
+        FPDF_ANNOTATION annot = FPDFPage_GetAnnot(page, i);
+        if (!annot)
+            continue;
+        if (FPDFAnnot_GetSubtype(annot) == FPDF_ANNOT_WIDGET)
+            ++fields;
+        FPDFPage_CloseAnnot(annot);
+    }
+
+    FPDF_ClosePage(page);
+    return fields;
+#else
+    return 0;
+#endif
+}
+
 int PdfDocument::annotationCount(int pageIndex) const
 {
     if (!m_valid || pageIndex < 0 || pageIndex >= m_pages.size())

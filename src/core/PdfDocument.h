@@ -94,6 +94,10 @@ public:
 
     // Number of annotations on a page, and removal by index. Index is
     // PDFium's own ordering, which is what hit-testing returns.
+    // Number of AcroForm fields on a page. Used to decide whether the document
+    // needs the form-filling machinery at all.
+    int formFieldCount(int pageIndex) const;
+
     int annotationCount(int pageIndex) const;
     bool removeAnnotation(int pageIndex, int annotationIndex);
 
