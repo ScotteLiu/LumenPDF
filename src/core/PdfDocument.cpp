@@ -1407,6 +1407,270 @@ bool PdfDocument::extractPagesTo(const QString &filePath, const QString &pageRan
 #endif
 }
 
+// ---------------------------------------------------------------------------
+// Ink
+// ---------------------------------------------------------------------------
+
+bool PdfDocument::addInkStrokes(int pageIndex,
+                                const QVector<QVector<QPointF>> &strokes,
+                                const QRectF &target,
+                                const QColor &color,
+                                double strokeWidth)
+{
+    if (!m_valid || strokes.isEmpty() || pageIndex < 0 || pageIndex >= m_pages.size())
+        return false;
+    if (target.width() <= 0 || target.height() <= 0)
+        return false;
+
+#ifdef LUMEN_HAS_PDFIUM
+    QMutexLocker locker(&m_mutex);
+    if (!m_handle)
+        return false;
+
+    invalidatePage(pageIndex);
+
+    FPDF_PAGE page = FPDF_LoadPage(static_cast<FPDF_DOCUMENT>(m_handle), pageIndex);
+    if (!page)
+        return false;
+
+    const double pageHeight = m_pages.at(pageIndex).sizePoints.height();
+
+    // Unit square -> target rect -> PDF user space (bottom-left origin), in one
+    // step so rounding happens once.
+    const auto mapPoint = [&](const QPointF &normalised) {
+        const double x = target.left() + normalised.x() * target.width();
+        const double yTopLeft = target.top() + normalised.y() * target.height();
+        return QPointF(x, pageHeight - yTopLeft);
+    };
+
+    int drawn = 0;
+
+    for (const QVector<QPointF> &stroke : strokes) {
+        if (stroke.size() < 2)
+            continue;
+
+        const QPointF first = mapPoint(stroke.first());
+        FPDF_PAGEOBJECT path = FPDFPageObj_CreateNewPath(float(first.x()), float(first.y()));
+        if (!path)
+            continue;
+
+        for (int i = 1; i < stroke.size(); ++i) {
+            const QPointF p = mapPoint(stroke.at(i));
+            FPDFPath_LineTo(path, float(p.x()), float(p.y()));
+        }
+
+        FPDFPageObj_SetStrokeColor(path, color.red(), color.green(), color.blue(), color.alpha());
+        FPDFPageObj_SetStrokeWidth(path, float(qBound(0.2, strokeWidth, 20.0)));
+        FPDFPageObj_SetLineCap(path, FPDF_LINECAP_ROUND);
+        FPDFPageObj_SetLineJoin(path, FPDF_LINEJOIN_ROUND);
+
+        // Stroke only, no fill: a signature is a line, and filling it would
+        // blob together every place the stroke crosses itself.
+        FPDFPath_SetDrawMode(path, FPDF_FILLMODE_NONE, 1);
+
+        FPDFPage_InsertObject(page, path);
+        ++drawn;
+    }
+
+    FPDFPage_GenerateContent(page);
+    FPDF_ClosePage(page);
+
+    if (drawn == 0)
+        return false;
+
+    m_modified = true;
+    qCInfo(lcDoc) << "inked" << drawn << "strokes on page" << pageIndex;
+    return true;
+#else
+    Q_UNUSED(target)
+    Q_UNUSED(color)
+    Q_UNUSED(strokeWidth)
+    return false;
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// Redaction
+// ---------------------------------------------------------------------------
+
+RedactionResult PdfDocument::redactRegions(int pageIndex, const QVector<QRectF> &regions)
+{
+    RedactionResult result;
+
+    if (!m_valid || regions.isEmpty() || pageIndex < 0 || pageIndex >= m_pages.size())
+        return result;
+
+#ifdef LUMEN_HAS_PDFIUM
+    const QSizeF pointSize = m_pages.at(pageIndex).sizePoints;
+    if (pointSize.width() <= 0 || pointSize.height() <= 0)
+        return result;
+
+    // Why flattening, and not surgical object removal:
+    //
+    // The obvious implementation walks the page's objects, removes the ones
+    // intersecting the region, and paints a black box. It was tried, and on a
+    // typical LaTeX-produced PDF it wiped the entire page -- because in such
+    // files a single text object is a whole paragraph or column, so *any*
+    // overlap condemns all of it.
+    //
+    // PDFium offers no way to split a text object or delete individual glyphs,
+    // so precise object-level redaction is not achievable through it. The
+    // remaining choices are to destroy far more than was asked (visibly
+    // mangling the page) or to render the page and replace it with the raster.
+    // Rasterising is the one that both looks right and provably leaks nothing:
+    // there is no text left under the box because there is no text at all.
+    //
+    // The cost -- the page loses selectable text everywhere -- is real, and the
+    // caller is expected to tell the user about it rather than hide it.
+    constexpr int kRedactionDpi = 300;
+    const double scale = kRedactionDpi / 72.0;
+
+    const QSize pixelSize(qMax(1, qRound(pointSize.width() * scale)),
+                          qMax(1, qRound(pointSize.height() * scale)));
+
+    // renderPage takes the lock itself, so it must be called before ours.
+    QImage raster = renderPage(pageIndex, pixelSize);
+    if (raster.isNull())
+        return result;
+
+    {
+        QPainter painter(&raster);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(Qt::black);
+
+        for (const QRectF &r : regions) {
+            if (r.width() <= 0 || r.height() <= 0)
+                continue;
+            painter.drawRect(QRectF(r.left() * scale,
+                                    r.top() * scale,
+                                    r.width() * scale,
+                                    r.height() * scale));
+            result.blackedOut.append(r);
+        }
+    }
+
+    if (result.blackedOut.isEmpty())
+        return result;
+
+    // PDFium's image objects want BGRA, which is this format's memory layout on
+    // little-endian -- the same trick the page renderer uses.
+    if (raster.format() != QImage::Format_ARGB32_Premultiplied)
+        raster = raster.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+
+    QMutexLocker locker(&m_mutex);
+    if (!m_handle)
+        return result;
+
+    invalidatePage(pageIndex);
+
+    auto doc = static_cast<FPDF_DOCUMENT>(m_handle);
+    FPDF_PAGE page = FPDF_LoadPage(doc, pageIndex);
+    if (!page)
+        return result;
+
+    // Strip the page bare. Backwards, because removing shifts the indices above.
+    const int objectCount = FPDFPage_CountObjects(page);
+    for (int i = objectCount - 1; i >= 0; --i) {
+        FPDF_PAGEOBJECT object = FPDFPage_GetObject(page, i);
+        if (!object)
+            continue;
+
+        const int type = FPDFPageObj_GetType(object);
+        if (!FPDFPage_RemoveObject(page, object))
+            continue;
+
+        // RemoveObject detaches without freeing; the page no longer owns it.
+        FPDFPageObj_Destroy(object);
+
+        ++result.objectsRemoved;
+        if (type == FPDF_PAGEOBJ_TEXT)
+            ++result.textObjectsRemoved;
+        else if (type == FPDF_PAGEOBJ_IMAGE)
+            ++result.imageObjectsRemoved;
+    }
+
+    FPDF_BITMAP bitmap = FPDFBitmap_CreateEx(raster.width(),
+                                             raster.height(),
+                                             FPDFBitmap_BGRA,
+                                             raster.bits(),
+                                             static_cast<int>(raster.bytesPerLine()));
+    if (!bitmap) {
+        FPDF_ClosePage(page);
+        return result;
+    }
+
+    FPDF_PAGEOBJECT imageObject = FPDFPageObj_NewImageObj(doc);
+    if (!imageObject) {
+        FPDFBitmap_Destroy(bitmap);
+        FPDF_ClosePage(page);
+        return result;
+    }
+
+    FPDFImageObj_SetBitmap(&page, 1, imageObject, bitmap);
+
+    // Image objects are drawn into the unit square, so the matrix is simply the
+    // page size. Placed at the origin, covering the page exactly.
+    FS_MATRIX matrix { float(pointSize.width()), 0.0f,
+                       0.0f, float(pointSize.height()),
+                       0.0f, 0.0f };
+    FPDFPageObj_SetMatrix(imageObject, &matrix);
+
+    FPDFPage_InsertObject(page, imageObject);
+    FPDFPage_GenerateContent(page);
+
+    // Only after GenerateContent: the bitmap's pixels have to stay valid until
+    // PDFium has encoded them into the page's content stream.
+    FPDFBitmap_Destroy(bitmap);
+    FPDF_ClosePage(page);
+
+    m_modified = true;
+    result.ok = true;
+
+    qCInfo(lcDoc) << "redacted page" << pageIndex
+                  << "-- flattened, destroying" << result.textObjectsRemoved
+                  << "text and" << result.imageObjectsRemoved << "image objects";
+    return result;
+#else
+    return result;
+#endif
+}
+
+bool PdfDocument::exportPageImage(int pageIndex,
+                                  const QString &filePath,
+                                  int dpi,
+                                  int quality) const
+{
+    if (!m_valid || pageIndex < 0 || pageIndex >= m_pages.size() || filePath.isEmpty())
+        return false;
+
+    const QSizeF points = m_pages.at(pageIndex).sizePoints;
+    if (points.width() <= 0 || points.height() <= 0)
+        return false;
+
+    // PDF user space is 72 units to the inch, so dpi/72 is the scale factor.
+    const double scale = qBound(24, dpi, 1200) / 72.0;
+    const QSize pixels(qMax(1, qRound(points.width() * scale)),
+                       qMax(1, qRound(points.height() * scale)));
+
+    // Guard against a page geometry plus a high DPI asking for a bitmap that
+    // cannot be allocated. 256 megapixels is far past any real use.
+    if (qint64(pixels.width()) * pixels.height() > 256LL * 1024 * 1024)
+        return false;
+
+    const QImage image = renderPage(pageIndex, pixels);
+    if (image.isNull())
+        return false;
+
+    // JPEG has no alpha; the render is opaque anyway, but converting keeps the
+    // written file from carrying a pointless alpha channel.
+    const QImage out = filePath.endsWith(QStringLiteral(".jpg"), Qt::CaseInsensitive)
+                    || filePath.endsWith(QStringLiteral(".jpeg"), Qt::CaseInsensitive)
+        ? image.convertToFormat(QImage::Format_RGB888)
+        : image;
+
+    return out.save(filePath, nullptr, quality);
+}
+
 QImage PdfDocument::renderPlaceholder(int index, const QSize &pixelSize) const
 {
     QImage image(pixelSize, QImage::Format_ARGB32_Premultiplied);

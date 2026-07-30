@@ -26,6 +26,8 @@ qt_add_qml_module(Lumen
         LumenSeparator.qml
         LumenSegmented.qml
         LumenToast.qml
+        LumenMenu.qml
+        LumenConfirm.qml
 )
 
 target_link_libraries(Lumen PRIVATE Qt6::Quick)

@@ -6,6 +6,7 @@
 #include <QObject>
 #include <QPointF>
 #include <QSharedPointer>
+#include <QVariantList>
 
 namespace lumen {
 
@@ -49,6 +50,17 @@ public:
 
     // Deletes the topmost annotation under a point, if any.
     Q_INVOKABLE bool removeAt(int pageIndex, const QPointF &point);
+
+    // Stamps ink onto a page.
+    //
+    // `strokes` is a list of lists of points normalised to the unit square, as
+    // QML produces them. `widthPoints` sizes the signature; the height follows
+    // from `aspect` so it is never distorted. Placement is bottom-right of the
+    // page's text area, which is where a signature goes on almost every form.
+    Q_INVOKABLE bool signPage(int pageIndex,
+                              const QVariantList &strokes,
+                              qreal aspect,
+                              qreal widthPoints);
 
 signals:
     void colorChanged();

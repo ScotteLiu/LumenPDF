@@ -274,6 +274,24 @@ ApplicationWindow {
             anchors.verticalCenter: parent.verticalCenter
             onClicked: pageView.fitWidth()
         }
+
+        Item { width: Tokens.space3; height: 1 }
+        LumenSeparator {
+            vertical: true
+            height: Tokens.space5
+            anchors.verticalCenter: parent.verticalCenter
+        }
+        Item { width: Tokens.space3; height: 1 }
+
+        LumenIconButton {
+            id: moreButton
+            iconPath: Icons.more
+            tooltip: qsTr("More actions")
+            active: moreMenu.opened
+            enabled: Document.status === DocumentStatus.Ready
+            anchors.verticalCenter: parent.verticalCenter
+            onClicked: moreMenu.opened ? moreMenu.close() : moreMenu.open()
+        }
     }
 
     // Right-aligned toolbar cluster. Kept out of the Row so it can anchor.
@@ -412,6 +430,117 @@ ApplicationWindow {
         loading: Document.status === DocumentStatus.Loading
         errorText: Document.status === DocumentStatus.Error ? Document.errorString : ""
         onOpenRequested: openDialog.open()
+    }
+
+    // Everything that is real but not frequent enough to earn toolbar space.
+    LumenMenu {
+        id: moreMenu
+        anchorItem: moreButton
+        preferredWidth: 268
+
+        items: [
+            {
+                label: qsTr("Export Pages as Images…"),
+                icon: Icons.image,
+                enabled: !Document.exporter.busy,
+                action: () => imagesDialog.open()
+            },
+            {
+                label: qsTr("Export Text…"),
+                icon: Icons.text,
+                action: () => textDialog.open()
+            },
+            { separator: true },
+            {
+                label: qsTr("Redact Selection…"),
+                icon: Icons.redact,
+                enabled: Document.redact.canRedact,
+                action: () => redactConfirm.open()
+            },
+            {
+                label: qsTr("Add Signature…"),
+                icon: Icons.signature,
+                action: () => {
+                    signaturePad.targetPage = pageView.currentPage;
+                    signaturePad.open();
+                }
+            },
+            { separator: true },
+            {
+                label: qsTr("Save a Copy…"),
+                icon: Icons.save,
+                shortcut: "Ctrl+Shift+S",
+                action: () => saveDialog.open()
+            }
+        ]
+    }
+
+    FolderDialog {
+        id: imagesDialog
+        title: qsTr("Choose a folder for the exported images")
+        onAccepted: Document.exporter.exportImages(selectedFolder, "png", -1, -1)
+    }
+
+    FileDialog {
+        id: textDialog
+        title: qsTr("Export Text")
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "txt"
+        nameFilters: [qsTr("Text files (*.txt)")]
+        onAccepted: Document.exporter.exportText(selectedFile)
+    }
+
+    Connections {
+        target: Document.exporter
+        function onFailed(reason) { toast.show(reason, true) }
+        function onFinished(directory, fileCount) {
+            toast.show(qsTr("Exported %n file(s)", "", fileCount));
+        }
+    }
+
+    // Export progress. A thin line under the toolbar rather than a modal
+    // dialog: the document stays readable while it runs.
+    Rectangle {
+        anchors.top: toolbar.bottom
+        anchors.left: parent.left
+        width: parent.width * Document.exporter.progress
+        height: 2
+        z: 30
+        color: Tokens.accent
+        opacity: Document.exporter.busy ? 1 : 0
+
+        Behavior on width { NumberAnimation { duration: Motion.fast } }
+        Behavior on opacity { NumberAnimation { duration: Motion.normal } }
+    }
+
+    LumenConfirm {
+        id: redactConfirm
+        title: qsTr("Redact the selected text?")
+        body: qsTr("The text will be permanently destroyed — this cannot be undone, "
+                 + "even before saving.\n\n"
+                 + "Each affected page is flattened to an image, so those pages will "
+                 + "no longer be searchable or selectable. This is what guarantees "
+                 + "nothing is recoverable from underneath the black box.")
+        confirmText: qsTr("Redact")
+        destructive: true
+        onConfirmed: Document.redact.redactSelection()
+    }
+
+    SignaturePad {
+        id: signaturePad
+        onAccepted: toast.show(qsTr("Signature placed"))
+    }
+
+    Connections {
+        target: Document.redact
+        function onFailed(reason) { toast.show(reason, true) }
+        function onFlattenedPages(pageCount) {
+            // Redaction flattens the page to an image. Not saying so would let
+            // the user discover it later by finding that search stopped working
+            // -- and a security tool that surprises you is not trustworthy.
+            toast.show(qsTr("Redacted — %n page(s) flattened to an image", "",
+                            pageCount));
+        }
     }
 
     LumenToast {

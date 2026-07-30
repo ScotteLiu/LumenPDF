@@ -32,6 +32,20 @@ struct SearchHit {
     QVector<QRectF> rects;
 };
 
+// Outcome of a redaction.
+//
+// `blackedOut` is what was actually destroyed, which can be larger than what
+// was asked for -- see PdfDocument::redactRegions for why. Reporting it back is
+// what lets the UI black out exactly the area whose content is gone, rather
+// than the area the user happened to select.
+struct RedactionResult {
+    bool ok = false;
+    int objectsRemoved = 0;
+    int textObjectsRemoved = 0;
+    int imageObjectsRemoved = 0;
+    QVector<QRectF> blackedOut;
+};
+
 // One entry in the document outline (PDF "bookmarks"), pre-flattened.
 //
 // A flat list with a depth field beats a real tree here: the QML side needs a

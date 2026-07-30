@@ -9,6 +9,7 @@ qt_add_qml_module(App
         OutlinePanel.qml
         SearchPanel.qml
         SelectionToolbar.qml
+        SignaturePad.qml
         EmptyState.qml
 )
 

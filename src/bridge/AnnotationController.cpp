@@ -96,6 +96,69 @@ bool AnnotationController::applyToSelection(Type type)
     return anyApplied;
 }
 
+bool AnnotationController::signPage(int pageIndex,
+                                    const QVariantList &strokes,
+                                    qreal aspect,
+                                    qreal widthPoints)
+{
+    if (!m_document || !m_document->isValid())
+        return false;
+
+    // QML hands over a list of lists of points; flatten it into the shape the
+    // core expects, dropping anything degenerate.
+    QVector<QVector<QPointF>> converted;
+    converted.reserve(strokes.size());
+
+    for (const QVariant &strokeVariant : strokes) {
+        const QVariantList points = strokeVariant.toList();
+        if (points.size() < 2)
+            continue;
+
+        QVector<QPointF> stroke;
+        stroke.reserve(points.size());
+        for (const QVariant &pointVariant : points)
+            stroke.append(pointVariant.toPointF());
+
+        converted.append(stroke);
+    }
+
+    if (converted.isEmpty())
+        return false;
+
+    const auto info = m_document->pageInfo(pageIndex);
+    const qreal pageWidth = info.sizePoints.width();
+    const qreal pageHeight = info.sizePoints.height();
+    if (pageWidth <= 0 || pageHeight <= 0)
+        return false;
+
+    // Sized relative to the page so a signature looks the same on A4 and on
+    // Letter, and clamped so it cannot swamp a small page.
+    const qreal width = qBound(60.0, widthPoints > 0 ? widthPoints : pageWidth * 0.32,
+                               pageWidth * 0.8);
+    const qreal height = width * qBound(0.12, aspect > 0 ? aspect : 0.35, 1.0);
+
+    // One inch in from the bottom-right corner: clear of the trim, and where a
+    // signature line sits on nearly every printed form.
+    const qreal margin = 72.0;
+    const QRectF target(pageWidth - width - margin,
+                        pageHeight - height - margin,
+                        width,
+                        height);
+
+    // Signature ink is near-black rather than pure black, which reads as ink
+    // rather than as printed type.
+    const QColor inkColor(24, 28, 48, 255);
+
+    if (!m_document->addInkStrokes(pageIndex, converted, target, inkColor,
+                                  qMax(0.8, width / 130.0))) {
+        return false;
+    }
+
+    emit pageInvalidated(pageIndex);
+    qCInfo(lcAnnot) << "signed page" << pageIndex << "with" << converted.size() << "strokes";
+    return true;
+}
+
 bool AnnotationController::removeAt(int pageIndex, const QPointF &point)
 {
     if (!m_document || !m_document->isValid())

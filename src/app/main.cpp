@@ -1,7 +1,9 @@
 #include "bridge/AnnotationController.h"
 #include "bridge/DocumentController.h"
 #include "bridge/OutlineModel.h"
+#include "bridge/ExportController.h"
 #include "bridge/PageOperations.h"
+#include "bridge/RedactionController.h"
 #include "bridge/SearchController.h"
 #include "bridge/SelectionController.h"
 #include "core/PdfEngine.h"
@@ -172,6 +174,8 @@ int main(int argc, char *argv[])
                                  else if (action == QLatin1String("strikeout"))
                                      controller->annotate()->applyToSelection(
                                          lumen::AnnotationController::StrikeOut);
+                                 else if (action == QLatin1String("redact"))
+                                     controller->redact()->redactSelection();
 
                                  if (qEnvironmentVariableIsSet("LUMEN_SAVE_AS")) {
                                      controller->saveAs(QUrl::fromLocalFile(
@@ -212,6 +216,27 @@ int main(int argc, char *argv[])
 
                              if (parts.contains(QLatin1String("undo")))
                                  pages->undo();
+                         },
+                         Qt::SingleShotConnection);
+    }
+
+    // Test hook: export. "text,<path>" or "images,<dir>,<dpi>".
+    if (qEnvironmentVariableIsSet("LUMEN_EXPORT")) {
+        const QStringList parts = qEnvironmentVariable("LUMEN_EXPORT").split(u',');
+        QObject::connect(controller, &lumen::DocumentController::documentChanged,
+                         controller, [controller, parts] {
+                             if (controller->pageCount() <= 0 || parts.size() < 2)
+                                 return;
+
+                             auto *exporter = controller->exporter();
+                             if (parts.at(0) == QLatin1String("text")) {
+                                 exporter->exportText(QUrl::fromLocalFile(parts.at(1)));
+                             } else if (parts.at(0) == QLatin1String("images")) {
+                                 if (parts.size() >= 3)
+                                     exporter->setDpi(parts.at(2).toInt());
+                                 exporter->exportImages(QUrl::fromLocalFile(parts.at(1)),
+                                                        QStringLiteral("png"), -1, -1);
+                             }
                          },
                          Qt::SingleShotConnection);
     }

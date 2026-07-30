@@ -21,7 +21,14 @@ DocumentController::DocumentController(QObject *parent)
     , m_selection(new SelectionController(this))
     , m_annotate(new AnnotationController(m_selection, this))
     , m_pageOps(new PageOperations(this))
+    , m_exporter(new ExportController(this))
+    , m_redact(new RedactionController(m_selection, this))
 {
+    // Redaction changes rendered content exactly like an annotation does, so it
+    // reuses the same invalidation path.
+    connect(m_redact, &RedactionController::pageInvalidated,
+            m_annotate, &AnnotationController::pageInvalidated);
+
     // Reordering, rotating or deleting a page changes both the page list and
     // every rendered raster, so the models are reset and the whole cache is
     // dropped. Selection and search results refer to page indices that may no
@@ -140,6 +147,8 @@ void DocumentController::adoptDocument(const QSharedPointer<PdfDocument> &docume
     m_selection->setDocument(m_document);
     m_annotate->setDocument(m_document);
     m_pageOps->setDocument(m_document);
+    m_exporter->setDocument(m_document);
+    m_redact->setDocument(m_document);
 
     if (m_document && m_document->isValid()) {
         m_filePath = m_document->filePath();

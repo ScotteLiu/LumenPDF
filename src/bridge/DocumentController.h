@@ -5,7 +5,9 @@
 #include "bridge/AnnotationController.h"
 #include "bridge/OutlineModel.h"
 #include "bridge/SearchController.h"
+#include "bridge/ExportController.h"
 #include "bridge/PageOperations.h"
+#include "bridge/RedactionController.h"
 #include "bridge/SelectionController.h"
 
 #include <QAbstractItemModel>
@@ -38,6 +40,8 @@ class DocumentController : public QObject {
     Q_PROPERTY(lumen::SelectionController *selection READ selection CONSTANT)
     Q_PROPERTY(lumen::AnnotationController *annotate READ annotate CONSTANT)
     Q_PROPERTY(lumen::PageOperations *pages READ pages CONSTANT)
+    Q_PROPERTY(lumen::ExportController *exporter READ exporter CONSTANT)
+    Q_PROPERTY(lumen::RedactionController *redact READ redact CONSTANT)
 
     Q_PROPERTY(bool modified READ isModified NOTIFY modifiedChanged)
 
@@ -76,6 +80,8 @@ public:
     SelectionController *selection() const { return m_selection; }
     AnnotationController *annotate() const { return m_annotate; }
     PageOperations *pages() const { return m_pageOps; }
+    ExportController *exporter() const { return m_exporter; }
+    RedactionController *redact() const { return m_redact; }
 
     bool isModified() const;
     int renderGeneration() const { return m_renderGeneration; }
@@ -117,6 +123,8 @@ private:
     SelectionController *m_selection = nullptr;
     AnnotationController *m_annotate = nullptr;
     PageOperations *m_pageOps = nullptr;
+    ExportController *m_exporter = nullptr;
+    RedactionController *m_redact = nullptr;
 
     int m_renderGeneration = 0;
 };

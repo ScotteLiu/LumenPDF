@@ -133,6 +133,44 @@ public:
     // Writes selected pages out as a new document. Does not modify this one.
     bool extractPagesTo(const QString &filePath, const QString &pageRange) const;
 
+    // -- Ink -----------------------------------------------------------------
+
+    // Draws stroked polylines onto a page as vector paths.
+    //
+    // Strokes arrive normalised to the unit square and are mapped into `target`
+    // (PDF points, top-left origin). Normalised input keeps the coordinate
+    // conversion in one place, and vector output means a signature stays crisp
+    // at any zoom and adds a couple of kilobytes rather than a bitmap.
+    bool addInkStrokes(int pageIndex,
+                       const QVector<QVector<QPointF>> &strokes,
+                       const QRectF &target,
+                       const QColor &color,
+                       double strokeWidth);
+
+    // -- Redaction ---------------------------------------------------------
+
+    // Permanently destroys page content inside `regions`, in PDF points with a
+    // top-left origin.
+    //
+    // This removes content; it does not cover it up. A black rectangle drawn
+    // over text leaves the text in the file for anyone who copies it out, which
+    // is how redaction failures make the news.
+    //
+    // The page is flattened: rendered to a raster with the regions painted
+    // black, and its objects replaced by that raster. The cost is that the page
+    // loses selectable text everywhere, and callers must say so. See the
+    // implementation for why the obvious alternative is worse.
+    RedactionResult redactRegions(int pageIndex, const QVector<QRectF> &regions);
+
+    // -- Export ------------------------------------------------------------
+
+    // Renders one page to an image file at `dpi`. Format follows the file
+    // extension. Thread-safe, so a range of pages can be exported in parallel.
+    bool exportPageImage(int pageIndex,
+                         const QString &filePath,
+                         int dpi,
+                         int quality = -1) const;
+
     // An empty in-memory document, used as the holding area for deleted pages.
     static QSharedPointer<PdfDocument> createScratch();
 
