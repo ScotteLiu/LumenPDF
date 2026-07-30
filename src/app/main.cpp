@@ -241,6 +241,20 @@ int main(int argc, char *argv[])
                          Qt::SingleShotConnection);
     }
 
+    // Test hook: compress. "<path>,<dpi>".
+    if (qEnvironmentVariableIsSet("LUMEN_COMPRESS")) {
+        const QStringList parts = qEnvironmentVariable("LUMEN_COMPRESS").split(u',');
+        if (parts.size() >= 2) {
+            QObject::connect(controller, &lumen::DocumentController::documentChanged,
+                             controller, [controller, parts] {
+                                 if (controller->pageCount() > 0)
+                                     controller->compressTo(QUrl::fromLocalFile(parts.at(0)),
+                                                            parts.at(1).toInt());
+                             },
+                             Qt::SingleShotConnection);
+        }
+    }
+
     installCaptureHook(engine);
 
     result = app.exec();

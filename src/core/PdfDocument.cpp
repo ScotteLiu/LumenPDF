@@ -1300,7 +1300,7 @@ struct FileWriter {
 } // namespace
 #endif
 
-bool PdfDocument::saveAs(const QString &filePath)
+bool PdfDocument::saveAs(const QString &filePath, bool compact)
 {
     if (!m_valid || filePath.isEmpty())
         return false;
@@ -1330,9 +1330,13 @@ bool PdfDocument::saveAs(const QString &filePath)
     writer.file = &out;
     writer.failed = false;
 
+    // Incremental appends the changes and leaves the original bytes in place,
+    // which is fast and keeps the file's history. A compact save rewrites
+    // everything, which is the only way to actually reclaim space from
+    // replaced images or deleted pages.
     const bool ok = FPDF_SaveAsCopy(static_cast<FPDF_DOCUMENT>(m_handle),
                                     &writer.base,
-                                    FPDF_INCREMENTAL);
+                                    compact ? 0 : FPDF_INCREMENTAL);
 
     out.close();
 
@@ -1632,6 +1636,164 @@ RedactionResult PdfDocument::redactRegions(int pageIndex, const QVector<QRectF> 
     return result;
 #else
     return result;
+#endif
+}
+
+// ---------------------------------------------------------------------------
+// Compression
+// ---------------------------------------------------------------------------
+
+PdfDocument::CompressionReport PdfDocument::downsampleImages(int targetDpi)
+{
+    CompressionReport report;
+    if (!m_valid)
+        return report;
+
+#ifdef LUMEN_HAS_PDFIUM
+    QMutexLocker locker(&m_mutex);
+    if (!m_handle)
+        return report;
+
+    releaseTextCache();
+
+    const int dpi = qBound(72, targetDpi, 600);
+    auto doc = static_cast<FPDF_DOCUMENT>(m_handle);
+
+    for (int pageIndex = 0; pageIndex < m_pages.size(); ++pageIndex) {
+        FPDF_PAGE page = FPDF_LoadPage(doc, pageIndex);
+        if (!page)
+            continue;
+
+        bool pageChanged = false;
+        const int objectCount = FPDFPage_CountObjects(page);
+
+        for (int i = 0; i < objectCount; ++i) {
+            FPDF_PAGEOBJECT object = FPDFPage_GetObject(page, i);
+            if (!object || FPDFPageObj_GetType(object) != FPDF_PAGEOBJ_IMAGE)
+                continue;
+
+            ++report.imagesExamined;
+
+            // The matrix tells us how large the image is actually drawn. An
+            // image is only oversized relative to its rendered size -- a
+            // 4000px image is fine if it fills the page and wasteful if it is
+            // a 20pt logo.
+            FS_MATRIX matrix {};
+            if (!FPDFPageObj_GetMatrix(object, &matrix))
+                continue;
+
+            const double drawnWidthPoints = qAbs(double(matrix.a));
+            const double drawnHeightPoints = qAbs(double(matrix.d));
+            if (drawnWidthPoints < 1.0 || drawnHeightPoints < 1.0)
+                continue;
+
+            FPDF_BITMAP bitmap = FPDFImageObj_GetBitmap(object);
+            if (!bitmap)
+                continue;
+
+            const int srcWidth = FPDFBitmap_GetWidth(bitmap);
+            const int srcHeight = FPDFBitmap_GetHeight(bitmap);
+            const int stride = FPDFBitmap_GetStride(bitmap);
+            const int format = FPDFBitmap_GetFormat(bitmap);
+            void *buffer = FPDFBitmap_GetBuffer(bitmap);
+
+            if (srcWidth <= 0 || srcHeight <= 0 || !buffer) {
+                FPDFBitmap_Destroy(bitmap);
+                continue;
+            }
+
+            report.pixelsBefore += qint64(srcWidth) * srcHeight;
+
+            const int maxWidth = qMax(1, qRound(drawnWidthPoints * dpi / 72.0));
+            const int maxHeight = qMax(1, qRound(drawnHeightPoints * dpi / 72.0));
+
+            if (srcWidth <= maxWidth && srcHeight <= maxHeight) {
+                // Already within budget. Re-encoding would cost quality and
+                // gain nothing.
+                report.pixelsAfter += qint64(srcWidth) * srcHeight;
+                FPDFBitmap_Destroy(bitmap);
+                continue;
+            }
+
+            // PDFium's bitmap formats map onto Qt's directly for the two cases
+            // that actually occur; anything else is left alone rather than
+            // guessed at.
+            QImage::Format qtFormat = QImage::Format_Invalid;
+            if (format == FPDFBitmap_BGRA)
+                qtFormat = QImage::Format_ARGB32_Premultiplied;
+            else if (format == FPDFBitmap_BGR)
+                qtFormat = QImage::Format_RGB888;   // handled below
+
+            if (qtFormat == QImage::Format_Invalid) {
+                report.pixelsAfter += qint64(srcWidth) * srcHeight;
+                FPDFBitmap_Destroy(bitmap);
+                continue;
+            }
+
+            QImage source;
+            if (format == FPDFBitmap_BGRA) {
+                source = QImage(static_cast<uchar *>(buffer), srcWidth, srcHeight,
+                                stride, QImage::Format_ARGB32_Premultiplied).copy();
+            } else {
+                // BGR, three bytes per pixel: Qt's RGB888 is the other order.
+                source = QImage(static_cast<uchar *>(buffer), srcWidth, srcHeight,
+                                stride, QImage::Format_BGR888).copy()
+                             .convertToFormat(QImage::Format_ARGB32_Premultiplied);
+            }
+
+            FPDFBitmap_Destroy(bitmap);
+
+            if (source.isNull()) {
+                report.pixelsAfter += qint64(srcWidth) * srcHeight;
+                continue;
+            }
+
+            const QImage scaled = source.scaled(maxWidth, maxHeight,
+                                                Qt::KeepAspectRatio,
+                                                Qt::SmoothTransformation);
+            if (scaled.isNull()) {
+                report.pixelsAfter += qint64(srcWidth) * srcHeight;
+                continue;
+            }
+
+            FPDF_BITMAP replacement = FPDFBitmap_CreateEx(
+                scaled.width(), scaled.height(), FPDFBitmap_BGRA,
+                const_cast<uchar *>(scaled.bits()),
+                static_cast<int>(scaled.bytesPerLine()));
+
+            if (!replacement) {
+                report.pixelsAfter += qint64(srcWidth) * srcHeight;
+                continue;
+            }
+
+            if (FPDFImageObj_SetBitmap(&page, 1, object, replacement)) {
+                ++report.imagesDownsampled;
+                report.pixelsAfter += qint64(scaled.width()) * scaled.height();
+                pageChanged = true;
+            } else {
+                report.pixelsAfter += qint64(srcWidth) * srcHeight;
+            }
+
+            FPDFBitmap_Destroy(replacement);
+        }
+
+        if (pageChanged)
+            FPDFPage_GenerateContent(page);
+
+        FPDF_ClosePage(page);
+    }
+
+    report.ok = true;
+    if (report.imagesDownsampled > 0)
+        m_modified = true;
+
+    qCInfo(lcDoc) << "downsampled" << report.imagesDownsampled << "of"
+                  << report.imagesExamined << "images at" << dpi << "dpi;"
+                  << report.pixelsBefore << "->" << report.pixelsAfter << "pixels";
+    return report;
+#else
+    Q_UNUSED(targetDpi)
+    return report;
 #endif
 }
 

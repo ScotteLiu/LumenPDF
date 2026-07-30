@@ -133,6 +133,32 @@ ApplicationWindow {
     }
 
     FileDialog {
+        id: compressDialog
+        title: qsTr("Save a Reduced Copy")
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "pdf"
+        nameFilters: [qsTr("PDF documents (*.pdf)")]
+        // 150 dpi: still sharp on screen and acceptable in print, and the point
+        // below which downsampling starts to be visible.
+        onAccepted: Document.compressTo(selectedFile, 150)
+    }
+
+    Connections {
+        target: Document
+        function onCompressed(filePath, originalBytes, newBytes, imagesDownsampled) {
+            if (newBytes >= originalBytes) {
+                // Being honest about no saving beats reporting a fake one. Most
+                // text-only PDFs simply have nothing to compress.
+                toast.show(qsTr("Saved a copy — nothing left to compress"));
+                return;
+            }
+            const saved = Math.round((1 - newBytes / originalBytes) * 100);
+            toast.show(qsTr("%1% smaller — %n image(s) downsampled", "", imagesDownsampled)
+                         .arg(saved));
+        }
+    }
+
+    FileDialog {
         id: saveDialog
         title: qsTr("Save PDF As")
         fileMode: FileDialog.SaveFile
@@ -466,6 +492,11 @@ ApplicationWindow {
                 }
             },
             { separator: true },
+            {
+                label: qsTr("Reduce File Size…"),
+                icon: Icons.image,
+                action: () => compressDialog.open()
+            },
             {
                 label: qsTr("Save a Copy…"),
                 icon: Icons.save,

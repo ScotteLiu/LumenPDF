@@ -92,6 +92,12 @@ public:
     Q_INVOKABLE bool saveAs(const QUrl &url);
     Q_INVOKABLE bool save();
 
+    // Downsamples oversized images and writes a compacted copy.
+    //
+    // Always writes to a new file rather than in place: this is lossy, and
+    // silently degrading the only copy of someone's document is not acceptable.
+    Q_INVOKABLE bool compressTo(const QUrl &url, int targetDpi);
+
     Q_INVOKABLE void open(const QUrl &url);
     Q_INVOKABLE void close();
 
@@ -105,6 +111,11 @@ signals:
     void renderGenerationChanged();
     void saved(const QString &filePath);
     void saveFailed(const QString &reason);
+
+    // originalBytes/newBytes let the UI report the saving honestly, including
+    // when there was none.
+    void compressed(const QString &filePath, qint64 originalBytes, qint64 newBytes,
+                    int imagesDownsampled);
 
 private:
     void setStatus(Status status, const QString &error = {});

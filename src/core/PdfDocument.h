@@ -162,6 +162,21 @@ public:
     // implementation for why the obvious alternative is worse.
     RedactionResult redactRegions(int pageIndex, const QVector<QRectF> &regions);
 
+    // -- Compression -------------------------------------------------------
+
+    struct CompressionReport {
+        bool ok = false;
+        int imagesExamined = 0;
+        int imagesDownsampled = 0;
+        qint64 pixelsBefore = 0;
+        qint64 pixelsAfter = 0;
+    };
+
+    // Downsamples embedded images so that none exceeds `targetDpi` at the size
+    // it is actually drawn. Images already at or below the target are left
+    // exactly as they are -- re-encoding them would lose quality for nothing.
+    CompressionReport downsampleImages(int targetDpi);
+
     // -- Export ------------------------------------------------------------
 
     // Renders one page to an image file at `dpi`. Format follows the file
@@ -178,7 +193,11 @@ public:
 
     // Writes the document, annotations included. Saving over the original is
     // refused -- see the implementation for why.
-    bool saveAs(const QString &filePath);
+    //
+    // `compact` rewrites the file from scratch instead of appending an
+    // incremental update. That is what actually reclaims space after edits, at
+    // the cost of a slower write.
+    bool saveAs(const QString &filePath, bool compact = false);
 
 private:
     void buildOutline();

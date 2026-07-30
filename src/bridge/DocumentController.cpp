@@ -243,6 +243,60 @@ bool DocumentController::saveAs(const QUrl &url)
     return true;
 }
 
+bool DocumentController::compressTo(const QUrl &url, int targetDpi)
+{
+    if (!m_document || !m_document->isValid()) {
+        emit saveFailed(QStringLiteral("No document is open."));
+        return false;
+    }
+
+    QString path = url.isLocalFile() ? url.toLocalFile() : url.toString();
+    if (path.isEmpty()) {
+        emit saveFailed(QStringLiteral("No destination given."));
+        return false;
+    }
+    if (!path.endsWith(QStringLiteral(".pdf"), Qt::CaseInsensitive))
+        path += QStringLiteral(".pdf");
+
+    const QString sourcePath = m_document->filePath();
+    if (QFileInfo(path) == QFileInfo(sourcePath)) {
+        // Downsampling is lossy and irreversible. Overwriting the source would
+        // mean the original is gone the moment the user tries this once.
+        emit saveFailed(QStringLiteral("Choose a different file — compression is lossy."));
+        return false;
+    }
+
+    const qint64 originalBytes = QFileInfo(sourcePath).size();
+
+    const auto report = m_document->downsampleImages(targetDpi);
+    if (!report.ok) {
+        emit saveFailed(QStringLiteral("Could not process the document's images."));
+        return false;
+    }
+
+    // A compact save is what turns the smaller images into a smaller file; an
+    // incremental one would append them and leave the originals behind.
+    if (!m_document->saveAs(path, true)) {
+        emit saveFailed(m_document->lastError().isEmpty()
+                        ? QStringLiteral("Could not write the compressed copy.")
+                        : m_document->lastError());
+        return false;
+    }
+
+    // The in-memory document now holds downsampled images, so the open document
+    // is genuinely modified even though the user saved elsewhere. Refresh
+    // everything rather than pretend otherwise.
+    if (m_provider)
+        m_provider->clearCache();
+    ++m_renderGeneration;
+    emit renderGenerationChanged();
+    emit modifiedChanged();
+
+    emit compressed(path, originalBytes, QFileInfo(path).size(),
+                    report.imagesDownsampled);
+    return true;
+}
+
 bool DocumentController::save()
 {
     if (!m_document || !m_document->isValid())
