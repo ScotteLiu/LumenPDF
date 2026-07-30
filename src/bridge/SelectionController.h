@@ -79,6 +79,13 @@ private:
     Anchor m_focus;
     bool m_dragging = false;
 
+    // Whether a selection actually exists, kept separate from comparing the
+    // anchors. A single-character selection has anchor == focus, and so does a
+    // plain click that selected nothing -- so the anchors alone cannot tell
+    // them apart. Double-clicking one Chinese character selects exactly one
+    // character, and that must not read as "nothing selected".
+    bool m_hasSelection = false;
+
     // Set by word/line selection so that dragging afterwards keeps snapping
     // to the same granularity, the way every text view behaves.
     enum class Granularity { Character, Word, Line };

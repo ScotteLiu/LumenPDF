@@ -107,6 +107,10 @@ public:
     // Page width in PDF points. Returns 0 for an out-of-range index.
     Q_INVOKABLE double pageWidthPoints(int index) const;
 
+    // Length of a page's extracted text. Exists so tests can assert that
+    // redaction destroyed content, which a rendered black box cannot prove.
+    Q_INVOKABLE int pageTextLength(int index) const;
+
 signals:
     void statusChanged();
     void documentChanged();

@@ -66,6 +66,10 @@ endif()
 # ---------------------------------------------------------------------------
 qt_add_executable(lumenpdf
     src/app/main.cpp
+    src/app/TestFixtures.h
+    src/app/TestFixtures.cpp
+    src/app/StateReport.h
+    src/app/StateReport.cpp
 
     src/core/PdfTypes.h
     src/core/PdfDocument.h

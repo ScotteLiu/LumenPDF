@@ -15,8 +15,29 @@ namespace {
 constexpr int kDebounceMs = 180;
 
 // Below this many characters a search matches almost everything and costs a
-// full document scan for nothing.
-constexpr int kMinQueryLength = 2;
+// full document scan for nothing -- for alphabetic scripts. One Chinese
+// character is a perfectly ordinary thing to search for, so ideographic
+// queries are allowed at length one.
+constexpr int kMinLatinQueryLength = 2;
+
+bool isMeaningfulQuery(const QString &query)
+{
+    if (query.size() >= kMinLatinQueryLength)
+        return true;
+    if (query.isEmpty())
+        return false;
+
+    switch (query.front().script()) {
+    case QChar::Script_Han:
+    case QChar::Script_Hiragana:
+    case QChar::Script_Katakana:
+    case QChar::Script_Hangul:
+    case QChar::Script_Bopomofo:
+        return true;
+    default:
+        return false;
+    }
+}
 } // namespace
 
 SearchController::SearchController(QObject *parent)
@@ -82,7 +103,7 @@ void SearchController::restart()
     m_progress = 0.0;
     emit progressChanged();
 
-    if (m_query.size() < kMinQueryLength || !m_document || !m_document->isValid()) {
+    if (!isMeaningfulQuery(m_query) || !m_document || !m_document->isValid()) {
         setStatus(Idle);
         return;
     }
@@ -92,7 +113,7 @@ void SearchController::restart()
 
 void SearchController::runSearch()
 {
-    if (!m_document || !m_document->isValid() || m_query.size() < kMinQueryLength)
+    if (!m_document || !m_document->isValid() || !isMeaningfulQuery(m_query))
         return;
 
     setStatus(Running);

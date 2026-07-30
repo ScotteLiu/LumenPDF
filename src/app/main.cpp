@@ -1,3 +1,5 @@
+#include "app/StateReport.h"
+#include "app/TestFixtures.h"
 #include "bridge/AnnotationController.h"
 #include "bridge/DocumentController.h"
 #include "bridge/OutlineModel.h"
@@ -29,34 +31,58 @@ namespace {
 // automated runs do not have.
 //
 //   LUMEN_CAPTURE=work\ui-check\shot.png  LUMEN_CAPTURE_DELAY=3000  lumenpdf.exe file.pdf
-void installCaptureHook(QQmlApplicationEngine &engine)
+void installCaptureHook(QQmlApplicationEngine &engine,
+                        lumen::DocumentController *controller)
 {
-    const QByteArray target = qgetenv("LUMEN_CAPTURE");
-    if (target.isEmpty())
+    const QByteArray shotTarget = qgetenv("LUMEN_CAPTURE");
+    const QByteArray reportTarget = qgetenv("LUMEN_REPORT");
+    if (shotTarget.isEmpty() && reportTarget.isEmpty())
         return;
 
     bool ok = false;
     const int delayMs = qEnvironmentVariableIntValue("LUMEN_CAPTURE_DELAY", &ok);
 
-    QTimer::singleShot(ok && delayMs > 0 ? delayMs : 2500, &engine, [&engine, target] {
-        const auto roots = engine.rootObjects();
-        auto *window = roots.isEmpty() ? nullptr : qobject_cast<QQuickWindow *>(roots.first());
-        if (!window) {
-            qWarning("capture: no QQuickWindow root");
-            QCoreApplication::exit(2);
-            return;
+    QTimer::singleShot(ok && delayMs > 0 ? delayMs : 2500, &engine,
+                       [&engine, shotTarget, reportTarget, controller] {
+        int exitCode = 0;
+
+        // The state report comes first: it is what the tests assert on, and it
+        // should still be written even if grabbing the window fails.
+        if (!reportTarget.isEmpty()) {
+            const QString path = QString::fromLocal8Bit(reportTarget);
+            if (lumen::report::write(path, controller)) {
+                qInfo("report: wrote %s", qPrintable(path));
+            } else {
+                qWarning("report: failed to write %s", qPrintable(path));
+                exitCode = 4;
+            }
         }
 
-        const QImage shot = window->grabWindow();
-        const QString path = QString::fromLocal8Bit(target);
-        if (shot.isNull() || !shot.save(path)) {
-            qWarning("capture: failed to write %s", qPrintable(path));
-            QCoreApplication::exit(3);
-            return;
+        if (!shotTarget.isEmpty()) {
+            const auto roots = engine.rootObjects();
+            auto *window = roots.isEmpty() ? nullptr
+                                           : qobject_cast<QQuickWindow *>(roots.first());
+            const QString path = QString::fromLocal8Bit(shotTarget);
+
+            if (!window) {
+                qWarning("capture: no QQuickWindow root");
+                exitCode = 2;
+            } else {
+                const QImage shot = window->grabWindow();
+                if (shot.isNull() || !shot.save(path)) {
+                    qWarning("capture: failed to write %s", qPrintable(path));
+                    exitCode = 3;
+                } else {
+                    qInfo("capture: wrote %s (%dx%d)",
+                          qPrintable(path), shot.width(), shot.height());
+                }
+            }
         }
 
-        qInfo("capture: wrote %s (%dx%d)", qPrintable(path), shot.width(), shot.height());
-        QCoreApplication::quit();
+        if (exitCode != 0)
+            QCoreApplication::exit(exitCode);
+        else
+            QCoreApplication::quit();
     });
 }
 
@@ -72,6 +98,15 @@ int main(int argc, char *argv[])
 #endif
 
     QGuiApplication app(argc, argv);
+
+    // Fixture generation needs Qt's font database and QPdfWriter but no window,
+    // so it runs and exits before anything else is set up.
+    if (qEnvironmentVariableIsSet("LUMEN_MAKE_FIXTURES")) {
+        const int written = lumen::fixtures::writeAll(
+            qEnvironmentVariable("LUMEN_MAKE_FIXTURES"));
+        return written > 0 ? 0 : 1;
+    }
+
     QGuiApplication::setApplicationName(QStringLiteral("LumenPDF"));
     QGuiApplication::setOrganizationName(QStringLiteral("Lumen"));
     QGuiApplication::setApplicationVersion(QStringLiteral(LUMEN_VERSION));
@@ -147,6 +182,22 @@ int main(int argc, char *argv[])
                                  controller->search()->setQuery(query);
                          },
                          Qt::SingleShotConnection);
+    }
+
+    // Test hook: double-click word selection, as "page,x,y" in PDF points.
+    if (qEnvironmentVariableIsSet("LUMEN_SELECT_WORD")) {
+        const QStringList parts = qEnvironmentVariable("LUMEN_SELECT_WORD").split(u',');
+        if (parts.size() == 3) {
+            QObject::connect(controller, &lumen::DocumentController::documentChanged,
+                             controller, [controller, parts] {
+                                 if (controller->pageCount() <= 0)
+                                     return;
+                                 controller->selection()->selectWordAt(
+                                     parts.at(0).toInt(),
+                                     QPointF(parts.at(1).toDouble(), parts.at(2).toDouble()));
+                             },
+                             Qt::SingleShotConnection);
+        }
     }
 
     // Test hook: drive a drag-selection from the environment, as
@@ -296,7 +347,7 @@ int main(int argc, char *argv[])
                          Qt::SingleShotConnection);
     }
 
-    installCaptureHook(engine);
+    installCaptureHook(engine, controller);
 
     result = app.exec();
     }

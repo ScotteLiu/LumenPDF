@@ -20,6 +20,13 @@ in 130 ms), match highlighting with a strong marker on the current hit.
 **Selecting** — click-drag and double-click selection that follows the real
 text flow, including across columns and across pages. Copy to clipboard.
 
+**CJK correctness** — Chinese, Japanese and Korean text is a first-class case,
+not an afterthought. Extraction normalises the Kangxi-radical duplicates that
+CJK fonts map glyphs through, so copied text is the characters you actually see
+rather than lookalikes that match nothing when pasted. Searching works for a
+single ideograph, and double-clicking selects one character instead of the whole
+line. All four of those were real bugs, and each now has a regression test.
+
 **Editing** — highlight, underline and strike-through in four colours, applied
 from a floating bar that appears over the selection. Rotate, reorder and delete
 pages. Append another PDF, or export any page as its own file. Sign by drawing,
@@ -91,6 +98,22 @@ cmake --build --preset windows-release
 
 The app also builds without PDFium present — it falls back to a stub renderer
 that draws placeholder pages, which is enough to work on the UI.
+
+### Tests
+
+```powershell
+./scripts/run-tests.ps1
+```
+
+33 assertions, none of them a screenshot comparison. Fixtures are generated
+rather than committed — Latin and CJK samples by `src/app/TestFixtures.cpp`
+(QPdfWriter), the AcroForm sample by `scripts/make-form-fixture.ps1`.
+
+The suite runs the app with `LUMEN_*` hooks, has it write a JSON state report
+through the same controllers the UI uses, and asserts on that. Redaction is the
+case that makes the approach necessary: a black box proves nothing, so the
+assertion is that the page's extracted text length went to **zero** while every
+other page stayed intact.
 
 ### Packaging
 

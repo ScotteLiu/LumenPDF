@@ -95,6 +95,13 @@ double DocumentController::pageWidthPoints(int index) const
     return m_document->pageInfo(index).sizePoints.width();
 }
 
+int DocumentController::pageTextLength(int index) const
+{
+    if (!m_document || !m_document->isValid() || index < 0 || index >= m_document->pageCount())
+        return 0;
+    return m_document->pageText(index).size();
+}
+
 void DocumentController::open(const QUrl &url)
 {
     const QString path = url.isLocalFile() ? url.toLocalFile() : url.toString();

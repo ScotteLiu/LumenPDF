@@ -50,6 +50,64 @@ constexpr int kMaxOutlineItems = 20000;
 // offsets into it are untouched.
 QString expandLigatures(QString text);
 
+// True for characters that stand alone as a selectable unit: Han ideographs,
+// kana, Hangul. None of these are separated by spaces, so the Latin notion of
+// a "word" does not apply to them.
+bool isIdeographic(QChar c)
+{
+    switch (c.script()) {
+    case QChar::Script_Han:
+    case QChar::Script_Hiragana:
+    case QChar::Script_Katakana:
+    case QChar::Script_Hangul:
+    case QChar::Script_Bopomofo:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// Maps Kangxi Radicals and CJK Radicals Supplement to the unified ideographs
+// they duplicate.
+//
+// PDFium extracts whatever the font's cmap points at, and CJK fonts routinely
+// map glyphs through the radical blocks. The result reads correctly on screen
+// and is wrong everywhere else: copying gives U+2F00 KANGXI RADICAL ONE instead
+// of U+4E00, so pasting it somewhere else finds nothing, and searching for the
+// character the user actually typed finds nothing either.
+//
+// Only 1:1 replacements are applied. That is essential, not an optimisation:
+// character indices into this text are handed straight to
+// FPDFText_CountRects/GetRect, so changing the length would misplace every
+// highlight after the first substitution.
+QString normalizeCjkRadicals(QString text)
+{
+    bool touched = false;
+
+    for (int i = 0; i < text.size(); ++i) {
+        const char16_t code = text.at(i).unicode();
+
+        const bool inRadicalBlock =
+            (code >= 0x2E80 && code <= 0x2EF3) ||   // CJK Radicals Supplement
+            (code >= 0x2F00 && code <= 0x2FD5);     // Kangxi Radicals
+        if (!inRadicalBlock)
+            continue;
+
+        // NFKC is what defines this mapping; applying it per character avoids
+        // the rest of NFKC, which would also fold full-width punctuation to
+        // ASCII -- wrong for Chinese, where full-width forms are correct.
+        const QString folded = QString(text.at(i)).normalized(QString::NormalizationForm_KC);
+        if (folded.size() != 1)
+            continue;
+
+        text[i] = folded.at(0);
+        touched = true;
+    }
+
+    Q_UNUSED(touched)
+    return text;
+}
+
 QString sanitizeForDisplay(QString text)
 {
     // Invisible formatting characters: drop entirely.
@@ -427,7 +485,10 @@ QString PdfDocument::pageText(int index) const
 
     FPDFText_ClosePage(textPage);
     FPDF_ClosePage(page);
-    return text;
+
+    // Length-preserving, so indices into the result still line up with
+    // PDFium's own character indices.
+    return normalizeCjkRadicals(std::move(text));
 #else
     return QStringLiteral("Page %1 placeholder text.").arg(index + 1);
 #endif
@@ -471,29 +532,53 @@ QVector<SearchHit> PdfDocument::searchPage(int index,
         }
     }
 
-    unsigned long flags = 0;
-    if (matchCase)
-        flags |= FPDF_MATCHCASE;
-    if (wholeWord)
-        flags |= FPDF_MATCHWHOLEWORD;
+    // Matching runs over our own normalised page text rather than
+    // FPDFText_FindStart.
+    //
+    // PDFium searches the raw extracted text, which in CJK documents contains
+    // Kangxi-radical duplicates -- so searching for the character the user typed
+    // finds nothing, while the page visibly contains it. Normalisation is
+    // length-preserving, so indices from QString::indexOf are still valid inputs
+    // to FPDFText_CountRects, and matching now agrees with what the app copies
+    // and displays.
+    pageBody = normalizeCjkRadicals(std::move(pageBody));
 
-    // FPDF_WIDESTRING is UTF-16LE; QString's internal buffer already is.
-    const auto needle = reinterpret_cast<FPDF_WIDESTRING>(query.utf16());
-
-    FPDF_SCHHANDLE search = FPDFText_FindStart(textPage, needle, flags, 0);
-    if (!search) {
-        FPDFText_ClosePage(textPage);
-        FPDF_ClosePage(page);
-        return hits;
-    }
+    const QString needle = normalizeCjkRadicals(query);
+    const auto sensitivity = matchCase ? Qt::CaseSensitive : Qt::CaseInsensitive;
 
     const double pageHeight = m_pages.at(index).sizePoints.height();
 
-    while (FPDFText_FindNext(search)) {
+    for (int from = 0; from + needle.size() <= pageBody.size(); ) {
+        const int at = pageBody.indexOf(needle, from, sensitivity);
+        if (at < 0)
+            break;
+
+        from = at + 1;   // overlapping matches are still separate matches
+
+        if (wholeWord) {
+            // A boundary is the edge of the text, a non-word character, or the
+            // change of script into or out of an ideographic run -- ideographs
+            // have no spaces, so the Latin rule alone would reject every CJK
+            // match.
+            const auto isWordChar = [](QChar c) {
+                return c.isLetterOrNumber() || c == u'_';
+            };
+            const bool leftOk = at == 0
+                || !isWordChar(pageBody.at(at - 1))
+                || isIdeographic(pageBody.at(at - 1)) != isIdeographic(needle.front());
+            const int end = at + needle.size();
+            const bool rightOk = end >= pageBody.size()
+                || !isWordChar(pageBody.at(end))
+                || isIdeographic(pageBody.at(end)) != isIdeographic(needle.back());
+
+            if (!leftOk || !rightOk)
+                continue;
+        }
+
         SearchHit hit;
         hit.pageIndex = index;
-        hit.charIndex = FPDFText_GetSchResultIndex(search);
-        hit.charCount = FPDFText_GetSchCount(search);
+        hit.charIndex = at;
+        hit.charCount = needle.size();
 
         // Highlight geometry. A single match spans several rectangles when it
         // wraps across a line break.
@@ -514,11 +599,13 @@ QVector<SearchHit> PdfDocument::searchPage(int index,
 
         // Snippet with the match kept inside it, trimmed to one line.
         if (!pageBody.isEmpty()) {
-            const int from = qMax(0, hit.charIndex - kSnippetContext);
-            const int to = qMin(pageBody.size(), hit.charIndex + hit.charCount + kSnippetContext);
-            QString snippet = pageBody.mid(from, to - from);
+            // Not named `from`: that is the outer loop's cursor.
+            const int snipFrom = qMax(0, hit.charIndex - kSnippetContext);
+            const int snipTo = qMin(pageBody.size(),
+                                    hit.charIndex + hit.charCount + kSnippetContext);
+            QString snippet = pageBody.mid(snipFrom, snipTo - snipFrom);
 
-            hit.snippetMatchStart = hit.charIndex - from;
+            hit.snippetMatchStart = hit.charIndex - snipFrom;
             hit.snippetMatchLength = hit.charCount;
 
             // Collapse whitespace so multi-line matches read as one line. Done
@@ -550,7 +637,6 @@ QVector<SearchHit> PdfDocument::searchPage(int index,
         hits.append(hit);
     }
 
-    FPDFText_FindClose(search);
     FPDFText_ClosePage(textPage);
     FPDF_ClosePage(page);
 #else
@@ -755,8 +841,11 @@ QString PdfDocument::textForRange(int pageIndex, int start, int count) const
     if (written <= 1)
         return {};
 
-    return QString::fromUtf16(reinterpret_cast<const char16_t *>(buffer.constData()),
-                              written - 1);
+    // Copying must give the characters the user believes they are copying, not
+    // the radical-block duplicates the font happened to map through.
+    return normalizeCjkRadicals(
+        QString::fromUtf16(reinterpret_cast<const char16_t *>(buffer.constData()),
+                           written - 1));
 #else
     Q_UNUSED(start)
     return {};
@@ -770,15 +859,26 @@ void PdfDocument::expandToWord(int pageIndex, int &start, int &count) const
         return;
 
     const QString page = pageText(pageIndex);
-    if (page.size() < total)
+    if (page.isEmpty())
         return;
-
-    const auto isWordChar = [](QChar c) {
-        return c.isLetterOrNumber() || c == u'_';
-    };
 
     int from = qBound(0, start, page.size() - 1);
     int to = qBound(0, start + qMax(1, count) - 1, page.size() - 1);
+
+    // Ideographs are a unit on their own. Chinese, Japanese and Korean are not
+    // space-separated, so the Latin rule "extend while the neighbour is a
+    // letter" would swallow the entire run -- double-clicking one character
+    // would select the whole line. Without a segmentation dictionary, one
+    // character is the honest answer, and it is what the user can predict.
+    if (isIdeographic(page.at(from))) {
+        start = from;
+        count = 1;
+        return;
+    }
+
+    const auto isWordChar = [](QChar c) {
+        return (c.isLetterOrNumber() || c == u'_') && !isIdeographic(c);
+    };
 
     while (from > 0 && isWordChar(page.at(from - 1)))
         --from;

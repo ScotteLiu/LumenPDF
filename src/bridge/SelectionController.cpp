@@ -33,12 +33,7 @@ void SelectionController::ordered(Anchor &from, Anchor &to) const
 
 bool SelectionController::isEmpty() const
 {
-    if (!m_anchor.isValid() || !m_focus.isValid())
-        return true;
-
-    Anchor from, to;
-    ordered(from, to);
-    return from.page == to.page && from.character == to.character;
+    return !m_hasSelection || !m_anchor.isValid() || !m_focus.isValid();
 }
 
 int SelectionController::firstPage() const
@@ -126,6 +121,10 @@ void SelectionController::begin(int pageIndex, const QPointF &point)
     m_dragging = true;
     m_granularity = Granularity::Character;
 
+    // A press alone selects nothing; the drag has to move first. Otherwise
+    // every click would leave one character highlighted.
+    m_hasSelection = false;
+
     emit changed();
 }
 
@@ -159,6 +158,7 @@ void SelectionController::extend(int pageIndex, const QPointF &point)
         return;
 
     m_focus = next;
+    m_hasSelection = true;
     emit changed();
 }
 
@@ -187,6 +187,7 @@ void SelectionController::selectWordAt(int pageIndex, const QPointF &point)
     m_focus = Anchor { pageIndex, start + count - 1 };
     m_granularity = Granularity::Word;
     m_dragging = true;
+    m_hasSelection = true;
 
     emit changed();
 }
@@ -208,6 +209,7 @@ void SelectionController::selectLineAt(int pageIndex, const QPointF &point)
     m_focus = Anchor { pageIndex, start + count - 1 };
     m_granularity = Granularity::Line;
     m_dragging = true;
+    m_hasSelection = true;
 
     emit changed();
 }
@@ -224,18 +226,20 @@ void SelectionController::selectAll()
     m_focus = Anchor { lastPage, lastChar };
     m_granularity = Granularity::Character;
     m_dragging = false;
+    m_hasSelection = true;
 
     emit changed();
 }
 
 void SelectionController::clear()
 {
-    if (!m_anchor.isValid() && !m_focus.isValid() && !m_dragging)
+    if (!m_anchor.isValid() && !m_focus.isValid() && !m_dragging && !m_hasSelection)
         return;
 
     m_anchor = {};
     m_focus = {};
     m_dragging = false;
+    m_hasSelection = false;
     m_granularity = Granularity::Character;
 
     emit changed();
