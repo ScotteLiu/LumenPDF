@@ -78,6 +78,15 @@ ApplicationWindow {
         sequences: [StandardKey.Redo]
         onActivated: Document.pages.redo()
     }
+    Shortcut {
+        sequence: "Ctrl+E"
+        enabled: Document.status === DocumentStatus.Ready
+        onActivated: {
+            pageView.textEditMode = !pageView.textEditMode;
+            if (!pageView.textEditMode)
+                pageView.editingRun = null;
+        }
+    }
     Shortcut { sequence: "Ctrl+Shift+D"; onActivated: Tokens.dark = !Tokens.dark }
 
     Shortcut {
@@ -308,6 +317,21 @@ ApplicationWindow {
             anchors.verticalCenter: parent.verticalCenter
         }
         Item { width: Tokens.space3; height: 1 }
+
+        LumenIconButton {
+            iconPath: Icons.editText
+            tooltip: pageView.textEditMode
+                     ? qsTr("Text editing on — click a run to edit it  (Ctrl+E)")
+                     : qsTr("Edit text  (Ctrl+E)")
+            active: pageView.textEditMode
+            enabled: Document.status === DocumentStatus.Ready
+            anchors.verticalCenter: parent.verticalCenter
+            onClicked: {
+                pageView.textEditMode = !pageView.textEditMode;
+                if (!pageView.textEditMode)
+                    pageView.editingRun = null;
+            }
+        }
 
         LumenIconButton {
             id: moreButton

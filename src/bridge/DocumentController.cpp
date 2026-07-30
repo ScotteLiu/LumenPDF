@@ -102,6 +102,30 @@ int DocumentController::pageTextLength(int index) const
     return m_document->pageText(index).size();
 }
 
+QVariantMap DocumentController::textRunAt(int pageIndex, const QPointF &point) const
+{
+    QVariantMap result;
+    result[QStringLiteral("valid")] = false;
+
+    if (!m_document || !m_document->isValid())
+        return result;
+
+    const TextObjectInfo info = m_document->textObjectAt(pageIndex, point);
+    if (!info.valid)
+        return result;
+
+    result[QStringLiteral("valid")] = true;
+    result[QStringLiteral("objectIndex")] = info.objectIndex;
+    result[QStringLiteral("text")] = info.text;
+    result[QStringLiteral("x")] = info.bounds.x();
+    result[QStringLiteral("y")] = info.bounds.y();
+    result[QStringLiteral("width")] = info.bounds.width();
+    result[QStringLiteral("height")] = info.bounds.height();
+    result[QStringLiteral("fontSize")] = info.fontSize;
+    result[QStringLiteral("longRun")] = info.spansMuchText;
+    return result;
+}
+
 void DocumentController::open(const QUrl &url)
 {
     const QString path = url.isLocalFile() ? url.toLocalFile() : url.toString();

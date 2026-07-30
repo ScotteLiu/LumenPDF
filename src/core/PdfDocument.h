@@ -177,6 +177,23 @@ public:
                        const QColor &color,
                        double strokeWidth);
 
+    // -- Text editing ------------------------------------------------------
+    //
+    // PDFium can replace the string of a text object but cannot split one, so
+    // the editable unit is the whole object. What that means in practice
+    // depends entirely on how the producing application chose to group glyphs,
+    // which is why the UI shows the user exactly what it is about to replace.
+
+    // The topmost text object containing `point` (PDF points, top-left origin).
+    TextObjectInfo textObjectAt(int pageIndex, const QPointF &point) const;
+
+    QString textObjectString(int pageIndex, int objectIndex) const;
+
+    // Replaces a text object's string. The glyphs are re-laid out from the
+    // object's origin using the font's own advances, so any hand-placed
+    // spacing inside the original run is lost -- callers must say so.
+    bool setTextObjectString(int pageIndex, int objectIndex, const QString &text);
+
     // -- Redaction ---------------------------------------------------------
 
     // Permanently destroys page content inside `regions`, in PDF points with a

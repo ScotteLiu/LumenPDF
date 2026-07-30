@@ -39,6 +39,7 @@ QString PageOperations::undoLabel() const
     case Command::Move:   return tr("Undo Move Page");
     case Command::Delete: return tr("Undo Delete Page");
     case Command::Insert: return tr("Undo Insert Pages");
+    case Command::EditText: return tr("Undo Text Edit");
     }
     return tr("Undo");
 }
@@ -53,6 +54,7 @@ QString PageOperations::redoLabel() const
     case Command::Move:   return tr("Redo Move Page");
     case Command::Delete: return tr("Redo Delete Page");
     case Command::Insert: return tr("Redo Insert Pages");
+    case Command::EditText: return tr("Redo Text Edit");
     }
     return tr("Redo");
 }
@@ -116,6 +118,14 @@ bool PageOperations::apply(Command &command)
         emit structureChanged();
         return true;
     }
+
+    case Command::EditText:
+        if (!m_document->setTextObjectString(command.a, command.b, command.newText))
+            return false;
+        // Only one page's appearance changed, so this is not structural -- the
+        // page list and outline are untouched.
+        emit pageInvalidated(command.a);
+        return true;
     }
 
     return false;
@@ -156,6 +166,12 @@ bool PageOperations::revert(const Command &command)
         if (!m_document->deletePageRange(command.a, command.b))
             return false;
         emit structureChanged();
+        return true;
+
+    case Command::EditText:
+        if (!m_document->setTextObjectString(command.a, command.b, command.oldText))
+            return false;
+        emit pageInvalidated(command.a);
         return true;
     }
 
@@ -277,6 +293,37 @@ bool PageOperations::extractTo(const QUrl &url, int firstPage, int lastPage)
     const int count = to - from + 1;
     qCInfo(lcPageOps) << "extracted pages" << range << "to" << path;
     emit extracted(path, count);
+    return true;
+}
+
+bool PageOperations::editText(int pageIndex, int objectIndex, const QString &newText)
+{
+    if (!m_document || !m_document->isValid())
+        return false;
+
+    const QString oldText = m_document->textObjectString(pageIndex, objectIndex);
+    if (oldText == newText)
+        return false;   // nothing to record and nothing to do
+
+    Command command;
+    command.kind = Command::EditText;
+    command.a = pageIndex;
+    command.b = objectIndex;
+    command.oldText = oldText;
+    command.newText = newText;
+
+    if (!apply(command)) {
+        // The usual cause is a subset-embedded font that has no glyphs for the
+        // new characters. Nothing was changed, and the user needs to know why
+        // rather than wonder whether the click registered.
+        emit failed(tr("This text cannot be edited — its font does not contain "
+                       "the characters you typed."));
+        return false;
+    }
+
+    push(command);
+    qCInfo(lcPageOps) << "edited text on page" << pageIndex
+                      << "object" << objectIndex;
     return true;
 }
 

@@ -48,6 +48,13 @@ public:
     // not on the undo stack. `lastPage` is inclusive.
     Q_INVOKABLE bool extractTo(const QUrl &url, int firstPage, int lastPage);
 
+    // Replaces a text object's string.
+    //
+    // Text editing lives on this stack rather than having one of its own: two
+    // undo histories behind one Ctrl+Z is a trap, and the user thinks of all of
+    // this as "changes to the document".
+    Q_INVOKABLE bool editText(int pageIndex, int objectIndex, const QString &newText);
+
     Q_INVOKABLE bool undo();
     Q_INVOKABLE bool redo();
 
@@ -68,14 +75,21 @@ signals:
 
 private:
     struct Command {
-        enum Kind { Rotate, Move, Delete, Insert } kind = Rotate;
-        int a = 0;          // rotate: page   move: from   delete: page   insert: at
-        int b = 0;          // rotate: turns  move: to     delete: stash   insert: count
+        enum Kind { Rotate, Move, Delete, Insert, EditText } kind = Rotate;
+        int a = 0;          // rotate: page   move: from   delete: page
+                            // insert: at     edittext: page
+        int b = 0;          // rotate: turns  move: to     delete: stash
+                            // insert: count  edittext: object index
 
         // Insert only. The source document is held open for the lifetime of
         // the command so redo re-imports exactly what was imported the first
         // time, even if the file on disk has since changed or gone away.
         QSharedPointer<PdfDocument> source;
+
+        // EditText only. Both directions are stored, because a text edit can
+        // only be reversed by knowing what was there before.
+        QString oldText;
+        QString newText;
     };
 
     // Takes a mutable reference: deleting writes back where the page was

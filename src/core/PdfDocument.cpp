@@ -1968,6 +1968,199 @@ bool PdfDocument::extractPagesTo(const QString &filePath, const QString &pageRan
 }
 
 // ---------------------------------------------------------------------------
+// Text editing
+// ---------------------------------------------------------------------------
+
+namespace {
+// Beyond this many characters, a run is almost certainly a full line or
+// paragraph whose spacing the author positioned deliberately -- so replacing it
+// is likely to shift things visibly. Used only to warn.
+constexpr int kLongRunThreshold = 40;
+} // namespace
+
+TextObjectInfo PdfDocument::textObjectAt(int pageIndex, const QPointF &point) const
+{
+    TextObjectInfo info;
+    if (!m_valid || pageIndex < 0 || pageIndex >= m_pages.size())
+        return info;
+
+#ifdef LUMEN_HAS_PDFIUM
+    QMutexLocker locker(&m_mutex);
+    if (!m_handle)
+        return info;
+
+    FPDF_PAGE page = FPDF_LoadPage(static_cast<FPDF_DOCUMENT>(m_handle), pageIndex);
+    if (!page)
+        return info;
+
+    FPDF_TEXTPAGE textPage = FPDFText_LoadPage(page);
+    const double pageHeight = m_pages.at(pageIndex).sizePoints.height();
+    const double userY = pageHeight - point.y();
+
+    // Backwards: later objects paint on top, so the topmost hit is the one the
+    // user believes they clicked.
+    const int count = FPDFPage_CountObjects(page);
+    for (int i = count - 1; i >= 0; --i) {
+        FPDF_PAGEOBJECT object = FPDFPage_GetObject(page, i);
+        if (!object || FPDFPageObj_GetType(object) != FPDF_PAGEOBJ_TEXT)
+            continue;
+
+        float left = 0, bottom = 0, right = 0, top = 0;
+        if (!FPDFPageObj_GetBounds(object, &left, &bottom, &right, &top))
+            continue;
+
+        if (point.x() < left || point.x() > right || userY < bottom || userY > top)
+            continue;
+
+        info.objectIndex = i;
+        info.bounds = QRectF(left, pageHeight - top, right - left, top - bottom);
+
+        float size = 0;
+        if (FPDFTextObj_GetFontSize(object, &size))
+            info.fontSize = size;
+
+        if (textPage) {
+            info.text = readUtf16([&](unsigned short *buf, unsigned long len) {
+                return FPDFTextObj_GetText(object, textPage, buf, len);
+            });
+            info.text = normalizeCjkRadicals(std::move(info.text));
+        }
+
+        info.spansMuchText = info.text.size() > kLongRunThreshold;
+        info.valid = true;
+        break;
+    }
+
+    if (textPage)
+        FPDFText_ClosePage(textPage);
+    FPDF_ClosePage(page);
+#else
+    Q_UNUSED(point)
+#endif
+
+    return info;
+}
+
+QString PdfDocument::textObjectString(int pageIndex, int objectIndex) const
+{
+    if (!m_valid || objectIndex < 0 || pageIndex < 0 || pageIndex >= m_pages.size())
+        return {};
+
+#ifdef LUMEN_HAS_PDFIUM
+    QMutexLocker locker(&m_mutex);
+    if (!m_handle)
+        return {};
+
+    FPDF_PAGE page = FPDF_LoadPage(static_cast<FPDF_DOCUMENT>(m_handle), pageIndex);
+    if (!page)
+        return {};
+
+    QString text;
+    FPDF_PAGEOBJECT object = FPDFPage_GetObject(page, objectIndex);
+    FPDF_TEXTPAGE textPage = FPDFText_LoadPage(page);
+
+    if (object && textPage && FPDFPageObj_GetType(object) == FPDF_PAGEOBJ_TEXT) {
+        text = readUtf16([&](unsigned short *buf, unsigned long len) {
+            return FPDFTextObj_GetText(object, textPage, buf, len);
+        });
+        text = normalizeCjkRadicals(std::move(text));
+    }
+
+    if (textPage)
+        FPDFText_ClosePage(textPage);
+    FPDF_ClosePage(page);
+    return text;
+#else
+    return {};
+#endif
+}
+
+bool PdfDocument::setTextObjectString(int pageIndex, int objectIndex, const QString &text)
+{
+    if (!m_valid || objectIndex < 0 || pageIndex < 0 || pageIndex >= m_pages.size())
+        return false;
+
+#ifdef LUMEN_HAS_PDFIUM
+    QMutexLocker locker(&m_mutex);
+    if (!m_handle)
+        return false;
+
+    invalidatePage(pageIndex);
+
+    FPDF_PAGE page = FPDF_LoadPage(static_cast<FPDF_DOCUMENT>(m_handle), pageIndex);
+    if (!page)
+        return false;
+
+    FPDF_PAGEOBJECT object = FPDFPage_GetObject(page, objectIndex);
+    if (!object || FPDFPageObj_GetType(object) != FPDF_PAGEOBJ_TEXT) {
+        FPDF_ClosePage(page);
+        return false;
+    }
+
+    // Keep the original so the edit can be rolled back if it does not survive.
+    QString previous;
+    if (FPDF_TEXTPAGE beforePage = FPDFText_LoadPage(page)) {
+        previous = readUtf16([&](unsigned short *buf, unsigned long len) {
+            return FPDFTextObj_GetText(object, beforePage, buf, len);
+        });
+        FPDFText_ClosePage(beforePage);
+    }
+
+    // FPDF_WIDESTRING is UTF-16LE, which QString already is internally.
+    if (!FPDFText_SetText(object, reinterpret_cast<FPDF_WIDESTRING>(text.utf16()))) {
+        FPDF_ClosePage(page);
+        return false;
+    }
+
+    FPDFPage_GenerateContent(page);
+
+    // Verify the edit round-trips, and roll it back if it does not.
+    //
+    // Most real PDFs embed fonts as *subsets* containing only the glyphs the
+    // document already uses. Setting text that needs any other glyph produces
+    // silent garbage -- editing "Latin fixture page 1" to "Edited by LumenPDF"
+    // yielded "Latin fixite  Luen ure page 1". PDFium reports success either
+    // way, so the only way to know is to read the text back.
+    //
+    // Corrupting someone's document and reporting success is far worse than
+    // refusing an edit, so a mismatch reverts and fails.
+    QString readBack;
+    if (FPDF_TEXTPAGE afterPage = FPDFText_LoadPage(page)) {
+        readBack = readUtf16([&](unsigned short *buf, unsigned long len) {
+            return FPDFTextObj_GetText(object, afterPage, buf, len);
+        });
+        FPDFText_ClosePage(afterPage);
+    }
+
+    const auto squashed = [](QString value) {
+        // Extraction can differ from the input in whitespace alone, which is
+        // not a corrupted edit.
+        return value.simplified();
+    };
+
+    if (squashed(normalizeCjkRadicals(readBack)) != squashed(text)) {
+        qCWarning(lcDoc) << "text edit did not survive re-encoding on page" << pageIndex
+                         << "object" << objectIndex
+                         << "-- wanted" << text << "got" << readBack;
+
+        FPDFText_SetText(object, reinterpret_cast<FPDF_WIDESTRING>(previous.utf16()));
+        FPDFPage_GenerateContent(page);
+        FPDF_ClosePage(page);
+        return false;
+    }
+
+    m_modified = true;
+    qCInfo(lcDoc) << "edited text object" << objectIndex << "on page" << pageIndex;
+
+    FPDF_ClosePage(page);
+    return true;
+#else
+    Q_UNUSED(text)
+    return false;
+#endif
+}
+
+// ---------------------------------------------------------------------------
 // Ink
 // ---------------------------------------------------------------------------
 

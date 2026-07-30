@@ -40,6 +40,22 @@ nothing left underneath to recover. That costs the page its selectable text, and
 the confirmation dialog says so rather than hiding it. Verified by extracting
 text from the saved file, not by looking at the black box.
 
+**Text correction** — press Ctrl+E, click a run of text, and edit it in place.
+Be aware of what this is and is not.
+
+PDFium can replace a text object's string but cannot split one, and most PDFs
+embed fonts as *subsets* containing only the glyphs already used. Typing a
+character the font does not have produces silent garbage — the first version of
+this turned "Latin fixture page 1" into "Latin fixite  Luen ure page 1" while
+reporting success. So every edit is read back and verified, and one that does
+not survive re-encoding is rolled back with an explanation. Corrupting a
+document and calling it success is worse than refusing.
+
+What that leaves is a reliable tool for **correcting** text — typos, numbers,
+labels — and an honest refusal everywhere else. It is not a word processor, and
+the editor shows you the exact run it is about to replace rather than letting
+you assume you are changing one word.
+
 **Forms** — click a field and type. AcroForm text fields, checkboxes and radio
 buttons, filled through PDFium's form-fill environment and written back into the
 document. The cursor changes over a field, which is how anyone discovers a PDF
@@ -166,15 +182,11 @@ else's machine, so it is not taken on trust.
 **MVP** — ~~open, render, scroll, zoom, search, thumbnails, outline, annotate,
 reorder pages, merge, split, save~~ ✅ **complete**
 
-**v1** — ~~installer~~ ✅ · ~~export (images, text)~~ ✅ · ~~true redaction~~ ✅ ·
-~~signatures~~ ✅ · ~~compression~~ ✅ · ~~form filling~~ ✅ · **text editing**
-remains.
+**v1** — complete: installer, export, true redaction, signatures, compression,
+form filling, and text correction.
 
-Text editing is the one genuinely open item. PDFium can replace a text object's
-string, but not split one, and in most real PDFs a text object is a whole line
-or paragraph — the same limitation that decided the redaction design. Editing a
-word therefore means re-laying out its whole run, which is a typesetting
-problem, not an API call.
+**v2** — OCR, batch processing, split-view comparison, AI summarisation, and
+real text editing (see the caveat below).
 **v2** — OCR, batch processing, split-view comparison, AI summarisation.
 
 ## Licensing

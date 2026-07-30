@@ -32,6 +32,24 @@ struct SearchHit {
     QVector<QRectF> rects;
 };
 
+// A text-drawing object on a page, as PDFium models it.
+//
+// The unit of editing is the whole object, because PDFium can replace a text
+// object's string but cannot split one. In most real PDFs an object is a line
+// or a phrase, occasionally a whole paragraph -- so editing is honest about
+// operating on a run of text rather than pretending to be a word processor.
+struct TextObjectInfo {
+    bool valid = false;
+    int objectIndex = -1;
+    QString text;
+    QRectF bounds;        // PDF points, top-left origin
+    double fontSize = 0.0;
+
+    // True when the run is long enough that replacing it is likely to disturb
+    // spacing the original author set by hand. Used to warn, not to refuse.
+    bool spansMuchText = false;
+};
+
 // Outcome of a redaction.
 //
 // `blackedOut` is what was actually destroyed, which can be larger than what

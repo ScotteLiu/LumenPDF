@@ -36,6 +36,15 @@ Item {
     signal firstPageShown()
     property bool _firstPageReported: false
 
+    // Text editing is an explicit mode rather than something a click can fall
+    // into. Reading and selecting are what the app does 99% of the time, and a
+    // tool that silently turns a mis-click into a document edit is worse than
+    // one that asks you to opt in.
+    property bool textEditMode: false
+
+    // The run currently being edited: { pageIndex, objectIndex, ... }.
+    property var editingRun: null
+
     // rectsForPage() is a plain function call, so QML cannot know when its
     // answer changes. Bumping this counter is what re-evaluates the highlight
     // Repeaters -- cheaper and far more predictable than exposing one list
@@ -264,6 +273,33 @@ Item {
                     }
                 }
 
+                // In-place text editor, on whichever page holds the run.
+                Loader {
+                    active: root.editingRun !== null
+                            && root.editingRun.pageIndex === pageSlot.index
+                    z: 60
+                    asynchronous: false
+
+                    sourceComponent: TextEditOverlay {
+                        pointScale: pageSlot.pageWidth / pageSlot.widthPoints
+                        runBounds: Qt.rect(root.editingRun.x, root.editingRun.y,
+                                           root.editingRun.width, root.editingRun.height)
+                        runText: root.editingRun.text
+                        runFontSize: root.editingRun.fontSize
+                        longRun: root.editingRun.longRun
+
+                        Component.onCompleted: open()
+
+                        onCommitted: (text) => {
+                            Document.pages.editText(root.editingRun.pageIndex,
+                                                    root.editingRun.objectIndex,
+                                                    text);
+                            root.editingRun = null;
+                        }
+                        onCancelled: root.editingRun = null
+                    }
+                }
+
                 // The floating action bar for the selection, shown on the
                 // first page the selection touches and only once the drag has
                 // finished. Loaded lazily -- it does not exist at all while
@@ -327,7 +363,8 @@ Item {
 
                     // An I-beam over text, a hand over a form field: the cursor
                     // is how the user discovers a PDF is fillable at all.
-                    cursorShape: hoveredField !== FormFieldKind.None
+                    cursorShape: root.textEditMode ? Qt.IBeamCursor
+                               : hoveredField !== FormFieldKind.None
                                  ? Qt.PointingHandCursor
                                  : Qt.IBeamCursor
 
@@ -370,6 +407,18 @@ Item {
 
                     onPressed: (mouse) => {
                         const p = pointAt(mouse.x, mouse.y);
+
+                        if (root.textEditMode) {
+                            const run = Document.textRunAt(pageSlot.index, p);
+                            if (run.valid) {
+                                run.pageIndex = pageSlot.index;
+                                root.editingRun = run;
+                            } else {
+                                root.editingRun = null;
+                            }
+                            Document.selection.clear();
+                            return;
+                        }
 
                         // Forms get first refusal. press() returns false when
                         // the point missed every field, and also commits any

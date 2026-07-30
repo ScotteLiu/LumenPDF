@@ -13,8 +13,10 @@
 
 #include <QAbstractItemModel>
 #include <QObject>
+#include <QPointF>
 #include <QSharedPointer>
 #include <QUrl>
+#include <QVariantMap>
 
 namespace lumen {
 
@@ -110,6 +112,11 @@ public:
     // Length of a page's extracted text. Exists so tests can assert that
     // redaction destroyed content, which a rendered black box cannot prove.
     Q_INVOKABLE int pageTextLength(int index) const;
+
+    // The editable text run under a point, as a map QML can read directly:
+    // { valid, objectIndex, text, x, y, width, height, fontSize, longRun }.
+    // Coordinates are PDF points with a top-left origin.
+    Q_INVOKABLE QVariantMap textRunAt(int pageIndex, const QPointF &point) const;
 
 signals:
     void statusChanged();

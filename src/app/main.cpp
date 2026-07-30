@@ -359,6 +359,45 @@ int main(int argc, char *argv[])
                          Qt::SingleShotConnection);
     }
 
+    // Test hook: edit the text run at a point. "<page>,<x>,<y>,<new text>".
+    if (qEnvironmentVariableIsSet("LUMEN_EDIT_TEXT")) {
+        const QStringList parts = qEnvironmentVariable("LUMEN_EDIT_TEXT").split(u',');
+        if (parts.size() >= 4) {
+            QObject::connect(controller, &lumen::DocumentController::documentChanged,
+                             controller, [controller, parts] {
+                                 if (controller->pageCount() <= 0)
+                                     return;
+
+                                 const int page = parts.at(0).toInt();
+                                 const QPointF point(parts.at(1).toDouble(),
+                                                     parts.at(2).toDouble());
+
+                                 const QVariantMap run = controller->textRunAt(page, point);
+                                 if (!run.value(QStringLiteral("valid")).toBool()) {
+                                     qWarning("edit-text: no text run at that point");
+                                     return;
+                                 }
+
+                                 // Everything after the third comma is the new
+                                 // text, so it may contain commas itself.
+                                 const QString text = parts.mid(3).join(u',');
+                                 controller->pages()->editText(
+                                     page,
+                                     run.value(QStringLiteral("objectIndex")).toInt(),
+                                     text);
+
+                                 if (parts.contains(QLatin1String("--undo")))
+                                     controller->pages()->undo();
+
+                                 if (qEnvironmentVariableIsSet("LUMEN_SAVE_AS")) {
+                                     controller->saveAs(QUrl::fromLocalFile(
+                                         qEnvironmentVariable("LUMEN_SAVE_AS")));
+                                 }
+                             },
+                             Qt::SingleShotConnection);
+        }
+    }
+
     installCaptureHook(engine, controller, platform);
 
     result = app.exec();

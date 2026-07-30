@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Runs LumenPDF's functional test suite.
 
@@ -63,7 +63,8 @@ foreach ($f in @($latin, $cjk, $form)) {
 # -- Harness ----------------------------------------------------------------
 $hookNames = @("LUMEN_SEARCH", "LUMEN_SELECT", "LUMEN_SELECT_WORD", "LUMEN_ANNOTATE",
                "LUMEN_SAVE_AS", "LUMEN_PAGEOP", "LUMEN_EXPORT", "LUMEN_COMPRESS",
-               "LUMEN_FORM_FILL", "LUMEN_THEME", "LUMEN_SIDEBAR_TAB", "LUMEN_CAPTURE")
+               "LUMEN_FORM_FILL", "LUMEN_THEME", "LUMEN_SIDEBAR_TAB", "LUMEN_CAPTURE",
+               "LUMEN_EDIT_TEXT", "LUMEN_BENCH")
 
 $env:QT_FORCE_STDERR_LOGGING = "1"
 $env:LUMEN_CAPTURE_DELAY = "3000"
@@ -309,6 +310,77 @@ if (Start-Case "form-detection") {
     if ($r.ok) { Assert-Equal $false $r.report.hasForms "plain document is not" }
 }
 
+if (Start-Case "text-edit-refuses-to-corrupt") {
+    # The guarantee being tested is not "editing works" -- it is that an edit
+    # which cannot be encoded in the run's font is refused and rolled back,
+    # rather than silently writing garbage into the document. Real PDFs embed
+    # font subsets, so this is the common case, not the edge case.
+    $target = Join-Path $scratch "textedit-refuse.pdf"
+    Copy-Item $latin $target -Force
+
+    # The heading is "Latin fixture page 1", so its subset has no 'b', 'd', 'y'
+    # or 'm'. Asking for them must fail.
+    Invoke-Lumen -Pdf $target -Name "textedit-refuse" -Hooks @{
+        LUMEN_EDIT_TEXT = "0,150,90,Edited by LumenPDF"
+        LUMEN_SAVE_AS = $target
+    } | Out-Null
+
+    $out = Join-Path $scratch "textedit-refuse.txt"
+    Invoke-Lumen -Pdf $target -Name "textedit-refuse-read" -Hooks @{
+        LUMEN_EXPORT = "text,$out"
+    } | Out-Null
+
+    if (Test-Path $out) {
+        $text = [System.Text.Encoding]::UTF8.GetString([System.IO.File]::ReadAllBytes($out))
+        Assert-True ($text.Contains("Latin fixture page 1")) `
+            "a text edit the font cannot encode leaves the original intact"
+        Assert-True (-not $text.Contains("Latin fixite")) `
+            "no garbled text is written when an edit is refused"
+    } else {
+        Assert-True $false "text export after refused edit"
+    }
+}
+
+if (Start-Case "text-edit-applies-and-undoes") {
+    # Only glyphs already present in the run, so this one must succeed.
+    $target = Join-Path $scratch "textedit-apply.pdf"
+    Copy-Item $latin $target -Force
+
+    Invoke-Lumen -Pdf $target -Name "textedit-apply" -Hooks @{
+        LUMEN_EDIT_TEXT = "0,150,90,Latin future page 1"
+        LUMEN_SAVE_AS = $target
+    } | Out-Null
+
+    $out = Join-Path $scratch "textedit-apply.txt"
+    Invoke-Lumen -Pdf $target -Name "textedit-apply-read" -Hooks @{
+        LUMEN_EXPORT = "text,$out"
+    } | Out-Null
+
+    if (Test-Path $out) {
+        $text = [System.Text.Encoding]::UTF8.GetString([System.IO.File]::ReadAllBytes($out))
+        Assert-True ($text.Contains("Latin future page 1")) "an encodable text edit is applied"
+    }
+
+    # Undo must put the original string back.
+    $undoTarget = Join-Path $scratch "textedit-undo.pdf"
+    Copy-Item $latin $undoTarget -Force
+    Invoke-Lumen -Pdf $undoTarget -Name "textedit-undo" -Hooks @{
+        LUMEN_EDIT_TEXT = "0,150,90,Latin future page 1,--undo"
+        LUMEN_SAVE_AS = $undoTarget
+    } | Out-Null
+
+    $undoOut = Join-Path $scratch "textedit-undo.txt"
+    Invoke-Lumen -Pdf $undoTarget -Name "textedit-undo-read" -Hooks @{
+        LUMEN_EXPORT = "text,$undoOut"
+    } | Out-Null
+
+    if (Test-Path $undoOut) {
+        $text = [System.Text.Encoding]::UTF8.GetString([System.IO.File]::ReadAllBytes($undoOut))
+        Assert-True ($text.Contains("Latin fixture page 1")) "undo restores the original text"
+        Assert-True (-not $text.Contains("Latin future page 1")) "undo removes the edit"
+    }
+}
+
 # -- Hostile input ----------------------------------------------------------
 #
 # The bar here is not "opens correctly" -- several of these cannot be opened at
@@ -374,3 +446,4 @@ if ($script:failed -eq 0) {
 Write-Host "$($script:passed) passed, $($script:failed) FAILED" -ForegroundColor Red
 foreach ($failure in $script:failures) { Write-Host "  - $failure" -ForegroundColor Red }
 exit 1
+
