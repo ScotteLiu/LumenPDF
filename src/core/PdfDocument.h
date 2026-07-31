@@ -39,6 +39,16 @@ public:
     QString filePath() const { return m_filePath; }
     QString lastError() const { return m_lastError; }
 
+    // True when the last load() failed only because a password was missing or
+    // wrong. Distinguishing this from "broken file" is what lets the UI ask
+    // instead of refusing.
+    bool needsPassword() const { return m_needsPassword; }
+
+    // True when the file opened but is encrypted -- a correct password was
+    // supplied, or the owner password is empty. Worth surfacing, because
+    // saving re-encodes and a permissions-only encryption is not carried over.
+    bool isEncrypted() const { return m_encrypted; }
+
     int pageCount() const { return m_pages.size(); }
     PageInfo pageInfo(int index) const;
 
@@ -77,6 +87,16 @@ public:
 
     QVector<QRectF> rectsForRange(int pageIndex, int start, int count) const;
     QString textForRange(int pageIndex, int start, int count) const;
+
+    // -- Links -------------------------------------------------------------
+
+    // The link under `point` (PDF points, top-left origin), or a target of
+    // Kind::None. Thread-safe.
+    LinkTarget linkAt(int pageIndex, const QPointF &point) const;
+
+    // Every link on a page, for drawing hover affordances without hit-testing
+    // on each mouse move.
+    QVector<LinkTarget> links(int pageIndex) const;
 
     // Expands a range to whole words / the whole line. Backs double- and
     // triple-click.
@@ -301,6 +321,8 @@ private:
     mutable QMutex m_mutex;
     void *m_handle = nullptr; // FPDF_DOCUMENT
     bool m_valid = false;
+    bool m_needsPassword = false;
+    bool m_encrypted = false;
     QString m_filePath;
     QString m_lastError;
     QVector<PageInfo> m_pages;

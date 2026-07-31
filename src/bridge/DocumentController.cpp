@@ -6,11 +6,15 @@
 #include "core/PdfDocument.h"
 #include "render/PageImageProvider.h"
 
+#include <QDesktopServices>
 #include <QFile>
 #include <QFileInfo>
+#include <QLoggingCategory>
 #include <QNetworkAccessManager>
 #include <QtConcurrent/QtConcurrentRun>
 #include <QFutureWatcher>
+
+Q_LOGGING_CATEGORY(lcDocument, "lumen.document.bridge")
 
 namespace lumen {
 
@@ -26,6 +30,7 @@ DocumentController::DocumentController(QObject *parent)
     , m_redact(new RedactionController(m_selection, this))
     , m_forms(new FormController(this))
     , m_ocr(new OcrController(this))
+    , m_print(new PrintController(this))
     , m_network(new QNetworkAccessManager(this))
     , m_google(new GoogleAuth(m_network, this))
     , m_drive(new GoogleDrive(m_google, m_network, this))
@@ -146,36 +151,120 @@ QVariantMap DocumentController::textRunAt(int pageIndex, const QPointF &point) c
 
 void DocumentController::open(const QUrl &url)
 {
+    openWithPassword(url, QString());
+}
+
+void DocumentController::unlock(const QString &password)
+{
+    if (m_pendingUrl.isEmpty()) {
+        return;
+    }
+    openWithPassword(m_pendingUrl, password);
+}
+
+void DocumentController::cancelUnlock()
+{
+    m_pendingUrl.clear();
+    setStatus(Status::Empty);
+}
+
+void DocumentController::openWithPassword(const QUrl &url, const QString &password)
+{
     const QString path = url.isLocalFile() ? url.toLocalFile() : url.toString();
     if (path.isEmpty()) {
         setStatus(Status::Error, QStringLiteral("Empty path"));
         return;
     }
 
+    const bool retry = !password.isEmpty();
     setStatus(Status::Loading);
 
     // Parsing the cross-reference table and page tree happens off the GUI
     // thread; a 2000-page file would otherwise stall the first frame.
     auto *watcher = new QFutureWatcher<QSharedPointer<PdfDocument>>(this);
-    connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher] {
+    connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher, url, retry] {
         const auto document = watcher->result();
         watcher->deleteLater();
 
         if (!document || !document->isValid()) {
+            // A missing or wrong password is a question, not a failure. The
+            // URL is kept so unlock() can retry it without QML having to hold
+            // the path across a dialog.
+            if (document && document->needsPassword()) {
+                m_pendingUrl = url;
+                setStatus(Status::Locked, document->lastError());
+                emit passwordRequired(retry);
+                return;
+            }
+
+            m_pendingUrl.clear();
             setStatus(Status::Error,
                       document ? document->lastError()
                                : QStringLiteral("Could not open the document."));
             return;
         }
 
+        m_pendingUrl.clear();
         adoptDocument(document);
     });
 
-    watcher->setFuture(QtConcurrent::run([path]() -> QSharedPointer<PdfDocument> {
+    watcher->setFuture(QtConcurrent::run([path, password]() -> QSharedPointer<PdfDocument> {
         auto document = QSharedPointer<PdfDocument>::create();
-        document->load(path);
+        document->load(path, password);
         return document;
     }));
+}
+
+QVariantMap DocumentController::linkAt(int pageIndex, const QPointF &point) const
+{
+    QVariantMap map;
+    map[QStringLiteral("kind")] = QStringLiteral("none");
+    if (!m_document)
+        return map;
+
+    const LinkTarget target = m_document->linkAt(pageIndex, point);
+    switch (target.kind) {
+    case LinkTarget::Kind::Page:
+        map[QStringLiteral("kind")] = QStringLiteral("page");
+        map[QStringLiteral("pageIndex")] = target.pageIndex;
+        break;
+    case LinkTarget::Kind::Uri:
+        map[QStringLiteral("kind")] = QStringLiteral("uri");
+        map[QStringLiteral("uri")] = target.uri;
+        break;
+    case LinkTarget::Kind::None:
+        return map;
+    }
+
+    map[QStringLiteral("x")] = target.rect.x();
+    map[QStringLiteral("y")] = target.rect.y();
+    map[QStringLiteral("width")] = target.rect.width();
+    map[QStringLiteral("height")] = target.rect.height();
+    return map;
+}
+
+int DocumentController::linkCount(int pageIndex) const
+{
+    return m_document ? m_document->links(pageIndex).size() : 0;
+}
+
+bool DocumentController::openExternalLink(const QString &uri)
+{
+    const QUrl url(uri);
+
+    // A PDF is untrusted input and its links can name any scheme. Only the two
+    // that a document has a legitimate reason to use are ever handed to the
+    // shell -- "file:" would open anything on disk and custom schemes can hand
+    // arguments to a registered program.
+    static const QStringList allowed { QStringLiteral("http"),
+                                       QStringLiteral("https"),
+                                       QStringLiteral("mailto") };
+
+    if (!url.isValid() || !allowed.contains(url.scheme().toLower())) {
+        qCWarning(lcDocument) << "refused a link with scheme" << url.scheme();
+        return false;
+    }
+    return QDesktopServices::openUrl(url);
 }
 
 void DocumentController::close()
@@ -203,6 +292,7 @@ void DocumentController::adoptDocument(const QSharedPointer<PdfDocument> &docume
     m_redact->setDocument(m_document);
     m_forms->setDocument(m_document);
     m_ocr->setDocument(m_document);
+    m_print->setDocument(m_document);
 
     if (m_document && m_document->isValid()) {
         m_filePath = m_document->filePath();

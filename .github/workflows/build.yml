@@ -1,0 +1,122 @@
+# Build and test.
+#
+# The test suite launches the real application about fifty times and asserts on
+# the JSON state report it writes. That works on a GitHub runner because Windows
+# runners have a desktop session; what they do not have is a GPU, so
+# LUMEN_GRAPHICS lets the run fall back to Qt's software rasteriser if the D3D11
+# backend cannot start.
+name: build
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["docs/**", "**.md"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          host: windows
+          target: desktop
+          arch: win64_msvc2019_64
+          modules: qtshadertools
+          cache: true
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install Ninja
+        run: choco install ninja --no-progress -y
+
+      # PDFium is a ~10 MB binary release, deliberately not committed.
+      - name: Cache PDFium
+        id: pdfium-cache
+        uses: actions/cache@v4
+        with:
+          path: third_party/pdfium
+          key: pdfium-chromium-7961-win64
+
+      - name: Fetch PDFium
+        if: steps.pdfium-cache.outputs.cache-hit != 'true'
+        run: ./scripts/fetch-pdfium.ps1
+        shell: pwsh
+
+      - name: Configure
+        run: cmake -S . -B build/windows-release -G Ninja -DCMAKE_BUILD_TYPE=Release
+        shell: pwsh
+
+      - name: Build
+        run: cmake --build build/windows-release
+        shell: pwsh
+
+      - name: Deploy the Qt runtime
+        run: |
+          $windeployqt = Join-Path $env:QT_ROOT_DIR "bin\windeployqt.exe"
+          & $windeployqt --qmldir qml --no-translations --no-system-d3d-compiler `
+              build/windows-release/lumenpdf.exe
+        shell: pwsh
+
+      # Translations are the one thing that fails silently: a missing .qm makes
+      # the interface English with no error anywhere. Checked before the suite
+      # so a failure here is not buried under fifty passing cases.
+      - name: Check translations are complete
+        run: |
+          $bad = 0
+          foreach ($ts in Get-ChildItem translations -Filter *.ts) {
+              [xml]$doc = Get-Content $ts.FullName -Encoding UTF8
+              $unfinished = $doc.SelectNodes("//translation[@type='unfinished']").Count
+              $total = $doc.SelectNodes("//message").Count
+              if ($unfinished -gt 0) {
+                  Write-Host "::error file=translations/$($ts.Name)::$unfinished of $total strings are untranslated"
+                  $bad++
+              } else {
+                  Write-Host "$($ts.Name): $total/$total"
+              }
+          }
+          if ($bad -gt 0) { exit 1 }
+        shell: pwsh
+
+      - name: Run the test suite
+        run: ./scripts/run-tests.ps1 -SkipBuild
+        shell: pwsh
+        env:
+          QT_FORCE_STDERR_LOGGING: "1"
+          # WARP is present on the runners, but if the D3D11 backend ever stops
+          # starting there, this is the one line that has to change.
+          LUMEN_GRAPHICS: ""
+
+      # The .log and .json files from every case, which is the only way to
+      # diagnose a failure that does not reproduce locally.
+      - name: Upload test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-output
+          path: work/tests/
+          retention-days: 7
+
+      - name: Package
+        run: ./scripts/package.ps1
+        shell: pwsh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lumenpdf-win64
+          path: build/dist/*
+          retention-days: 14

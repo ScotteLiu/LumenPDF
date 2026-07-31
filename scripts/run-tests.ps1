@@ -51,12 +51,16 @@ $env:LUMEN_MAKE_FIXTURES = $fixtureDir
 Remove-Item Env:LUMEN_MAKE_FIXTURES
 
 & (Join-Path $PSScriptRoot "make-form-fixture.ps1") | Out-Null
+& (Join-Path $PSScriptRoot "make-link-fixture.ps1") | Out-Null
+& (Join-Path $PSScriptRoot "make-encrypted-fixture.ps1") | Out-Null
 
-$latin = Join-Path $fixtureDir "latin-sample.pdf"
-$cjk   = Join-Path $fixtureDir "cjk-sample.pdf"
-$form  = Join-Path $fixtureDir "form-simple.pdf"
+$latin     = Join-Path $fixtureDir "latin-sample.pdf"
+$cjk       = Join-Path $fixtureDir "cjk-sample.pdf"
+$form      = Join-Path $fixtureDir "form-simple.pdf"
+$links     = Join-Path $fixtureDir "links.pdf"
+$encrypted = Join-Path $fixtureDir "encrypted.pdf"
 
-foreach ($f in @($latin, $cjk, $form)) {
+foreach ($f in @($latin, $cjk, $form, $links, $encrypted)) {
     if (-not (Test-Path $f)) { throw "Fixture missing: $f" }
 }
 
@@ -64,7 +68,9 @@ foreach ($f in @($latin, $cjk, $form)) {
 $hookNames = @("LUMEN_SEARCH", "LUMEN_SELECT", "LUMEN_SELECT_WORD", "LUMEN_ANNOTATE",
                "LUMEN_SAVE_AS", "LUMEN_PAGEOP", "LUMEN_EXPORT", "LUMEN_COMPRESS",
                "LUMEN_FORM_FILL", "LUMEN_THEME", "LUMEN_SIDEBAR_TAB", "LUMEN_CAPTURE",
-               "LUMEN_EDIT_TEXT", "LUMEN_BENCH", "LUMEN_OCR")
+               "LUMEN_EDIT_TEXT", "LUMEN_BENCH", "LUMEN_OCR",
+               "LUMEN_PRINT", "LUMEN_PASSWORD", "LUMEN_LINK_PROBE", "LUMEN_NOTE_PAGE",
+               "LUMEN_VERSION_COMPARE")
 
 $env:QT_FORCE_STDERR_LOGGING = "1"
 $env:LUMEN_CAPTURE_DELAY = "3000"
@@ -540,6 +546,270 @@ if (Start-Case "hostile-input") {
     # raster. The render path now has a pixel budget; this is what holds it.
     Assert-True ($peakMemory -lt 250) `
         "no hostile file pushes memory past 250 MB (peak ${peakMemory} MB)"
+}
+
+# -- Links ------------------------------------------------------------------
+#
+# The fixture carries four link annotations. Only three are followable: the
+# fourth is a Launch action, and a document must not be able to start a program
+# by being clicked.
+
+if (Start-Case "links-parsed") {
+    $r = Invoke-Lumen -Pdf $links -Name "links-parsed"
+    Assert-True $r.ok "app ran and reported state"
+    if ($r.ok) {
+        Assert-Equal 2 $r.report.pageCount "page count"
+        Assert-Equal 3 $r.report.pageLinkCounts[0] "page 1 has 3 followable links (of 4 annotations)"
+        Assert-Equal 0 $r.report.pageLinkCounts[1] "page 2 has none"
+    }
+}
+
+if (Start-Case "link-internal") {
+    # Rect [72 674 200 692] in PDF user space; centre, top-left origin.
+    $r = Invoke-Lumen -Pdf $links -Name "link-internal" `
+                      -Hooks @{ LUMEN_LINK_PROBE = "0,120,109" }
+    if ($r.ok) {
+        Assert-Equal "page" $r.report.linkProbe.kind "resolves as an internal jump"
+        Assert-Equal 1 $r.report.linkProbe.pageIndex "lands on page 2"
+    } else {
+        Assert-True $false "link-internal ran ($($r.reason))"
+    }
+}
+
+if (Start-Case "link-external") {
+    $r = Invoke-Lumen -Pdf $links -Name "link-external" `
+                      -Hooks @{ LUMEN_LINK_PROBE = "0,120,149" }
+    if ($r.ok) {
+        Assert-Equal "uri" $r.report.linkProbe.kind "resolves as a URI"
+        Assert-Equal "https://example.com/" $r.report.linkProbe.uri "carries the real target"
+    } else {
+        Assert-True $false "link-external ran ($($r.reason))"
+    }
+}
+
+if (Start-Case "link-misleading-label") {
+    # The page says "https://example.com/safe"; the annotation goes elsewhere.
+    # The URI the app reports must be the annotation's, not the printed text.
+    $r = Invoke-Lumen -Pdf $links -Name "link-misleading" `
+                      -Hooks @{ LUMEN_LINK_PROBE = "0,120,189" }
+    if ($r.ok) {
+        Assert-Equal "uri" $r.report.linkProbe.kind "resolves as a URI"
+        Assert-Equal "https://not-example.invalid/elsewhere" $r.report.linkProbe.uri `
+            "reports the annotation's target, not the visible label"
+    } else {
+        Assert-True $false "link-misleading ran ($($r.reason))"
+    }
+}
+
+if (Start-Case "link-launch-refused") {
+    $r = Invoke-Lumen -Pdf $links -Name "link-launch" `
+                      -Hooks @{ LUMEN_LINK_PROBE = "0,120,229" }
+    if ($r.ok) {
+        Assert-Equal "none" $r.report.linkProbe.kind `
+            "a Launch action is not offered as a followable link"
+    } else {
+        Assert-True $false "link-launch ran ($($r.reason))"
+    }
+}
+
+# -- Encrypted documents ----------------------------------------------------
+
+if (Start-Case "encrypted-locked") {
+    $r = Invoke-Lumen -Pdf $encrypted -Name "encrypted-locked"
+    Assert-True $r.ok "app ran and reported state"
+    if ($r.ok) {
+        # Status 4 is Locked -- distinct from 3 (Error), because the right
+        # response is a prompt, not a failure message.
+        Assert-Equal 4 $r.report.status "an encrypted file reports Locked, not Error"
+        Assert-Equal 0 $r.report.pageCount "nothing is exposed before the password"
+    }
+}
+
+if (Start-Case "encrypted-correct-password") {
+    $r = Invoke-Lumen -Pdf $encrypted -Name "encrypted-open" `
+                      -Hooks @{ LUMEN_PASSWORD = "lumen" }
+    if ($r.ok) {
+        Assert-Equal 2 $r.report.status "opens with the right password"
+        Assert-Equal 1 $r.report.pageCount "page count"
+        Assert-True ($r.report.pageTextLengths[0] -gt 100) `
+            "text decrypts and extracts (RC4 40-bit, R2)"
+    } else {
+        Assert-True $false "encrypted-open ran ($($r.reason))"
+    }
+}
+
+if (Start-Case "encrypted-wrong-password") {
+    $r = Invoke-Lumen -Pdf $encrypted -Name "encrypted-wrong" `
+                      -Hooks @{ LUMEN_PASSWORD = "not-the-password" }
+    if ($r.ok) {
+        Assert-Equal 4 $r.report.status "a wrong password leaves it Locked"
+        Assert-Equal 0 $r.report.pageCount "and exposes nothing"
+    } else {
+        Assert-True $false "encrypted-wrong ran ($($r.reason))"
+    }
+}
+
+# -- Printing ---------------------------------------------------------------
+#
+# Printed output is asserted by opening it again: the page count and page size
+# of the result are checkable numbers, where "it looked right" is not.
+
+if (Start-Case "print-all-pages") {
+    $printed = Join-Path $scratch "printed-all.pdf"
+    Remove-Item $printed -Force -ErrorAction SilentlyContinue
+
+    $env:LUMEN_CAPTURE_DELAY = "8000"
+    $r = Invoke-Lumen -Pdf $links -Name "print-all" -Hooks @{ LUMEN_PRINT = $printed }
+    $env:LUMEN_CAPTURE_DELAY = "3000"
+
+    Assert-True (Test-Path $printed) "print produced a file"
+    if (Test-Path $printed) {
+        $back = Invoke-Lumen -Pdf $printed -Name "print-all-check"
+        if ($back.ok) {
+            Assert-Equal 2 $back.report.pageCount "every page was printed"
+            # Print to a file keeps the document's own page size rather than
+            # reflowing a US Letter document onto the default A4.
+            Assert-Equal 612 ([math]::Round($back.report.pageWidthsPoints[0])) `
+                "the sheet keeps the source page size"
+        } else {
+            Assert-True $false "the printed file reopens ($($back.reason))"
+        }
+    }
+}
+
+if (Start-Case "print-page-range") {
+    $printed = Join-Path $scratch "printed-range.pdf"
+    Remove-Item $printed -Force -ErrorAction SilentlyContinue
+
+    $env:LUMEN_CAPTURE_DELAY = "8000"
+    $r = Invoke-Lumen -Pdf $links -Name "print-range" -Hooks @{ LUMEN_PRINT = "$printed,1,1" }
+    $env:LUMEN_CAPTURE_DELAY = "3000"
+
+    Assert-True (Test-Path $printed) "range print produced a file"
+    if (Test-Path $printed) {
+        $back = Invoke-Lumen -Pdf $printed -Name "print-range-check"
+        if ($back.ok) {
+            Assert-Equal 1 $back.report.pageCount "only the requested page was printed"
+        } else {
+            Assert-True $false "the range file reopens ($($back.reason))"
+        }
+    }
+}
+
+# -- Settings ---------------------------------------------------------------
+#
+# These write to the real user settings, which is the point: the failure mode
+# being tested is a value that does not survive a process boundary.
+
+if (Start-Case "settings-recent-files") {
+    $before = Invoke-Lumen -Pdf $latin -Name "recent-before"
+    $after  = Invoke-Lumen -Pdf $cjk   -Name "recent-after"
+
+    if ($before.ok -and $after.ok) {
+        Assert-True ($after.report.settings.recentCount -ge 2) `
+            "opening two documents leaves at least two in the recent list"
+        Assert-True ($after.report.settings.theme.Length -gt 0) `
+            "the theme preference reads back"
+    } else {
+        Assert-True $false "settings cases ran"
+    }
+}
+
+if (Start-Case "settings-reading-position") {
+    Invoke-Lumen -Pdf $latin -Name "position-note" -Hooks @{ LUMEN_NOTE_PAGE = "2" } | Out-Null
+    $r = Invoke-Lumen -Pdf $latin -Name "position-restore"
+
+    if ($r.ok) {
+        Assert-Equal 2 $r.report.settings.restoredPage "a reading position survives a restart"
+    } else {
+        Assert-True $false "position-restore ran ($($r.reason))"
+    }
+
+    # A position belongs to one document, not to the application.
+    $other = Invoke-Lumen -Pdf $cjk -Name "position-other"
+    if ($other.ok) {
+        Assert-Equal 0 $other.report.settings.restoredPage `
+            "a different document does not inherit it"
+    }
+}
+
+# -- Translations -----------------------------------------------------------
+#
+# Compiled .qm files are easy to leave out of a build and impossible to notice
+# missing: the interface simply stays English.
+
+if (Start-Case "translations-complete") {
+    $tsFiles = Get-ChildItem (Join-Path $repoRoot "translations") -Filter "*.ts"
+    Assert-True ($tsFiles.Count -ge 3) "translation files are present"
+
+    foreach ($ts in $tsFiles) {
+        [xml]$doc = Get-Content $ts.FullName -Encoding UTF8
+        $all = $doc.SelectNodes("//message").Count
+        $unfinished = $doc.SelectNodes("//translation[@type='unfinished']").Count
+        Assert-Equal 0 $unfinished "$($ts.Name) has no unfinished strings (of $all)"
+    }
+
+    # And that they actually reached the binary.
+    $qmDir = Join-Path $repoRoot "build\windows-release"
+    $compiled = Get-ChildItem $qmDir -Filter "*.qm" -Recurse -ErrorAction SilentlyContinue
+    Assert-True ($compiled.Count -ge 3) "the .qm files were compiled ($($compiled.Count) found)"
+}
+
+# -- Updates ----------------------------------------------------------------
+#
+# The comparison decides whether anyone is ever told an update exists. Getting
+# it backwards either hides releases or nags forever -- v0.2.0 shipped a binary
+# reporting 0.1.0, which would have done the latter.
+
+if (Start-Case "update-version-ordering") {
+    $cases = @(
+        @{ a = "v0.3.0";  b = "0.2.0";  expect =  1; what = "0.3.0 is newer than 0.2.0" },
+        @{ a = "0.2.0";   b = "v0.3.0"; expect = -1; what = "0.2.0 is older than 0.3.0" },
+        @{ a = "v1.0.0";  b = "1.0.0";  expect =  0; what = "a leading v is ignored" },
+        @{ a = "0.10.0";  b = "0.9.0";  expect =  1; what = "0.10 sorts above 0.9, not as a string" },
+        @{ a = "1.2";     b = "1.2.0";  expect =  0; what = "a missing field counts as zero" },
+        @{ a = "1.2.3";   b = "1.2.3-beta"; expect = 0; what = "a pre-release suffix is ignored" }
+    )
+
+    foreach ($case in $cases) {
+        $stem = "ver-$($case.a)-$($case.b)".Replace(".", "_")
+        $logPath = Join-Path $scratch "$stem.log"
+        $env:LUMEN_VERSION_COMPARE = "$($case.a),$($case.b)"
+        $env:LUMEN_REPORT = Join-Path $scratch "ver.json"
+
+        $proc = Start-Process $exe -ArgumentList $latin -Wait -PassThru `
+            -RedirectStandardError $logPath
+        $line = (Get-Content $logPath | Select-String "version-compare:" | Select-Object -First 1)
+        $actual = if ($line -match "version-compare:\s*(-?\d+)") { [int]$Matches[1] } else { "no output" }
+
+        Assert-Equal $case.expect $actual $case.what
+    }
+    Remove-Item Env:LUMEN_VERSION_COMPARE -ErrorAction SilentlyContinue
+}
+
+if (Start-Case "release-artefacts-have-checksums") {
+    # Not a build step -- an assertion about what a release contains. The
+    # in-app updater refuses to download from a release with no SHA256SUMS.txt,
+    # so publishing one without it ships an updater that cannot update.
+    $dist = Join-Path $repoRoot "build\dist"
+    if (Test-Path $dist) {
+        $sumsPath = Join-Path $dist "SHA256SUMS.txt"
+        Assert-True (Test-Path $sumsPath) "packaging writes SHA256SUMS.txt"
+
+        if (Test-Path $sumsPath) {
+            $sums = Get-Content $sumsPath
+            $artefacts = Get-ChildItem $dist -File |
+                         Where-Object { $_.Name -ne "SHA256SUMS.txt" }
+            foreach ($a in $artefacts) {
+                $expected = (Get-FileHash $a.FullName -Algorithm SHA256).Hash.ToLower()
+                $line = $sums | Where-Object { $_ -match "\s\*?$([regex]::Escape($a.Name))$" }
+                Assert-True ($null -ne $line -and $line.Split()[0] -eq $expected) `
+                    "$($a.Name) : checksum is present and correct"
+            }
+        }
+    } else {
+        Write-Host "    skip (nothing packaged yet -- run scripts/package.ps1)" -ForegroundColor DarkGray
+    }
 }
 
 # -- Summary ----------------------------------------------------------------

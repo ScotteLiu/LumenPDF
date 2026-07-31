@@ -64,6 +64,24 @@ struct RedactionResult {
     QVector<QRectF> blackedOut;
 };
 
+// A link annotation resolved under the pointer.
+//
+// PDF links come in many action flavours; only two of them are worth honouring
+// in a viewer. A jump inside the document is safe and immediate. A URI leaves
+// the application entirely, so it is carried back as text and shown to the
+// person before anything opens -- a link's visible label and its actual target
+// are independent strings in a PDF, and a document is untrusted input.
+// Everything else (launch a program, submit a form, run JavaScript) is
+// deliberately reported as None.
+struct LinkTarget {
+    enum class Kind { None, Page, Uri };
+
+    Kind kind = Kind::None;
+    int pageIndex = -1;   // Kind::Page
+    QString uri;          // Kind::Uri
+    QRectF rect;          // the link's own area, PDF points, top-left origin
+};
+
 // One entry in the document outline (PDF "bookmarks"), pre-flattened.
 //
 // A flat list with a depth field beats a real tree here: the QML side needs a

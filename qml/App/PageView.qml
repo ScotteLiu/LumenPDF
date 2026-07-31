@@ -36,6 +36,15 @@ Item {
     signal firstPageShown()
     property bool _firstPageReported: false
 
+    // A link that leaves the application. Not followed here: a PDF is
+    // untrusted input, its visible text and its actual target are unrelated
+    // strings, and the person clicking deserves to see where they are going.
+    signal linkActivated(string uri)
+
+    // The URI under the pointer, shown in a corner the way a browser does.
+    // Empty when the pointer is not over an external link.
+    property string hoveredUri: ""
+
     // Text editing is an explicit mode rather than something a click can fall
     // into. Reading and selecting are what the app does 99% of the time, and a
     // tool that silently turns a mis-click into a document edit is worse than
@@ -359,16 +368,31 @@ Item {
                     id: textArea
                     anchors.fill: parent
                     acceptedButtons: Qt.LeftButton
-                    hoverEnabled: Document.forms.hasForms
+                    hoverEnabled: true
 
-                    // An I-beam over text, a hand over a form field: the cursor
-                    // is how the user discovers a PDF is fillable at all.
+                    // An I-beam over text, a hand over a form field or a link:
+                    // the cursor is how anyone discovers a PDF is fillable, or
+                    // that a line of blue text is actually clickable.
                     cursorShape: root.textEditMode ? Qt.IBeamCursor
-                               : hoveredField !== FormFieldKind.None
+                               : (hoveredField !== FormFieldKind.None || hoveredLink)
                                  ? Qt.PointingHandCursor
                                  : Qt.IBeamCursor
 
                     property int hoveredField: FormFieldKind.None
+                    property bool hoveredLink: false
+
+                    // Evaluated once per page rather than per mouse move.
+                    // Probing for a link means loading the page in PDFium, and
+                    // most pages have no links at all.
+                    readonly property bool pageHasLinks:
+                        Document.linkCount(pageSlot.index) > 0
+
+                    // What was under the pointer when the button went down, and
+                    // where. A link is followed on release and only if the
+                    // pointer stayed put -- otherwise a drag that starts on a
+                    // link would navigate instead of selecting text.
+                    property var pressedLink: null
+                    property point pressedAt: Qt.point(0, 0)
 
                     // The ListView is a Flickable, and would otherwise steal
                     // the drag to scroll -- making text selection impossible
@@ -394,6 +418,11 @@ Item {
                         if (!pressed) {
                             if (Document.forms.hasForms)
                                 hoveredField = Document.forms.fieldKindAt(pageSlot.index, p);
+                            if (pageHasLinks) {
+                                const link = Document.linkAt(pageSlot.index, p);
+                                hoveredLink = link.kind !== "none";
+                                root.hoveredUri = link.kind === "uri" ? link.uri : "";
+                            }
                             return;
                         }
 
@@ -407,6 +436,10 @@ Item {
 
                     onPressed: (mouse) => {
                         const p = pointAt(mouse.x, mouse.y);
+
+                        pressedAt = Qt.point(mouse.x, mouse.y);
+                        pressedLink = pageHasLinks
+                                      ? Document.linkAt(pageSlot.index, p) : null;
 
                         if (root.textEditMode) {
                             const run = Document.textRunAt(pageSlot.index, p);
@@ -445,7 +478,33 @@ Item {
                             formDrag = false;
                             return;
                         }
+
                         Document.selection.end();
+
+                        // A click, not a drag. Four pixels of slop, because a
+                        // deliberate click on a trackpad is rarely perfectly
+                        // still.
+                        const moved = Math.abs(mouse.x - pressedAt.x)
+                                    + Math.abs(mouse.y - pressedAt.y);
+                        const link = pressedLink;
+                        pressedLink = null;
+
+                        if (!link || moved > 4 || root.textEditMode)
+                            return;
+
+                        if (link.kind === "page") {
+                            Document.selection.clear();
+                            root.goToPage(link.pageIndex);
+                        } else if (link.kind === "uri") {
+                            Document.selection.clear();
+                            root.linkActivated(link.uri);
+                        }
+                    }
+
+                    onExited: {
+                        hoveredField = FormFieldKind.None;
+                        hoveredLink = false;
+                        root.hoveredUri = "";
                     }
 
                     onDoubleClicked: (mouse) => {
@@ -571,6 +630,44 @@ Item {
             } else {
                 wheel.accepted = false;
             }
+        }
+    }
+
+    // The target of the link under the pointer, in the corner, the way a
+    // browser shows it. This is the only defence against a PDF whose visible
+    // text says one thing and whose link goes somewhere else, and it costs
+    // nothing when there is no link.
+    Squircle {
+        id: uriChip
+
+        anchors.left: parent.left
+        anchors.bottom: parent.bottom
+        anchors.margins: Tokens.space2
+        z: 60
+
+        width: Math.min(uriText.implicitWidth + Tokens.space3 * 2,
+                        root.width - Tokens.space4)
+        height: Tokens.controlHeight - 4
+        radius: Tokens.radiusSmall
+        fillColor: Tokens.surfaceElevated
+        strokeColor: Tokens.separator
+        strokeWidth: 1
+
+        opacity: root.hoveredUri.length > 0 ? 1 : 0
+        visible: opacity > 0
+        Behavior on opacity { NumberAnimation { duration: Motion.fast } }
+
+        Text {
+            id: uriText
+            anchors.fill: parent
+            anchors.leftMargin: Tokens.space3
+            anchors.rightMargin: Tokens.space3
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+            text: root.hoveredUri
+            font.family: Tokens.fontFamily
+            font.pixelSize: Tokens.textSmall
+            color: Tokens.textSecondary
         }
     }
 

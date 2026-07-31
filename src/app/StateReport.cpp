@@ -5,6 +5,7 @@
 #include "bridge/OutlineModel.h"
 #include "bridge/SearchController.h"
 #include "bridge/SelectionController.h"
+#include "app/Settings.h"
 #include "app/Timing.h"
 #include "core/PdfDocument.h"
 #include "platform/PlatformWindow.h"
@@ -13,12 +14,15 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLocale>
+#include <QVariantMap>
 
 namespace lumen::report {
 
 bool write(const QString &filePath,
            DocumentController *controller,
-           PlatformWindow *platform)
+           PlatformWindow *platform,
+           Settings *settings)
 {
     if (filePath.isEmpty() || !controller)
         return false;
@@ -61,13 +65,41 @@ bool write(const QString &filePath,
 
     QJsonArray pageTextLengths;
     QJsonArray pageWidths;
+    QJsonArray pageLinks;
     for (int i = 0; i < reportedPages; ++i) {
         pageTextLengths.append(controller->pageTextLength(i));
         pageWidths.append(controller->pageWidthPoints(i));
+        pageLinks.append(controller->linkCount(i));
     }
     root["reportedPages"] = reportedPages;
     root["pageTextLengths"] = pageTextLengths;
     root["pageWidthsPoints"] = pageWidths;
+    root["pageLinkCounts"] = pageLinks;
+
+    // Probe a single link, so a test can assert on what a click would resolve
+    // to without synthesising one. "<page>,<x>,<y>" in PDF points.
+    if (qEnvironmentVariableIsSet("LUMEN_LINK_PROBE")) {
+        const QStringList parts = qEnvironmentVariable("LUMEN_LINK_PROBE").split(u',');
+        if (parts.size() == 3) {
+            const QVariantMap link = controller->linkAt(
+                parts.at(0).toInt(),
+                QPointF(parts.at(1).toDouble(), parts.at(2).toDouble()));
+            root["linkProbe"] = QJsonObject::fromVariantMap(link);
+        }
+    }
+
+    if (settings) {
+        QJsonObject prefs;
+        prefs["theme"] = settings->theme();
+        prefs["language"] = settings->language();
+        prefs["zoomMode"] = settings->zoomMode();
+        prefs["recentCount"] = int(settings->recentFiles().size());
+        if (!controller->filePath().isEmpty())
+            prefs["restoredPage"] = settings->positionFor(controller->filePath());
+        root["settings"] = prefs;
+    }
+
+    root["uiLanguage"] = QLocale().name();
 
     // Startup timeline. Reported as absolute milliseconds from the first line
     // of main(), so the phases are directly comparable to each other.

@@ -1,17 +1,19 @@
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Dialogs
+import QtQuick.Window
 import Lumen
 import Lumen.Backend
 
 ApplicationWindow {
     id: window
 
-    width: 1280
-    height: 840
+    width: Prefs.windowSize.width
+    height: Prefs.windowSize.height
     minimumWidth: 720
     minimumHeight: 520
     visible: true
+    visibility: Prefs.windowMaximized ? Window.Maximized : Window.Windowed
     title: Document.title.length > 0
            ? (Document.modified ? "• " : "") + Document.title + " — LumenPDF"
            : "LumenPDF"
@@ -19,9 +21,77 @@ ApplicationWindow {
     color: Tokens.canvas
 
     Component.onCompleted: {
+        // Explicit order: the stored preference is the user's choice, and a
+        // test hook overriding it is more specific still.
+        Tokens.dark = Prefs.theme !== "light";
         if (Platform.initialDark >= 0)
             Tokens.dark = Platform.initialDark === 1;
+
         Platform.applyBackdrop(window, Tokens.dark);
+
+        if (Prefs.checkForUpdates)
+            updateTimer.start();
+    }
+
+    // Deferred: the first seconds after launch belong to getting a page on
+    // screen, not to a network request nobody asked for.
+    Timer {
+        id: updateTimer
+        interval: 4000
+        onTriggered: Updates.check()
+    }
+
+    // Window geometry is written as it changes rather than on close, because
+    // "on close" does not run when the process is killed.
+    onWidthChanged: geometryTimer.restart()
+    onHeightChanged: geometryTimer.restart()
+    onVisibilityChanged: {
+        if (visibility === Window.Maximized || visibility === Window.Windowed)
+            Prefs.windowMaximized = visibility === Window.Maximized;
+    }
+
+    Timer {
+        id: geometryTimer
+        interval: 400
+        onTriggered: {
+            if (window.visibility === Window.Windowed)
+                Prefs.windowSize = Qt.size(window.width, window.height);
+        }
+    }
+
+    // Remember the reading position, throttled -- this fires on every scroll.
+    Connections {
+        target: pageView
+        function onCurrentPageChanged() { positionTimer.restart() }
+        function onLinkActivated(uri) {
+            window.pendingUri = uri;
+            linkConfirm.open();
+        }
+    }
+
+    property string pendingUri: ""
+
+    Timer {
+        id: positionTimer
+        interval: 800
+        onTriggered: {
+            if (Document.status === DocumentStatus.Ready)
+                Prefs.notePosition(Document.filePath, pageView.currentPage);
+        }
+    }
+
+    // Reopen where reading stopped. Done on documentChanged rather than in the
+    // controller, because "which page is on screen" is a view concern and only
+    // the view can scroll to it.
+    Connections {
+        target: Document
+        function onDocumentChanged() {
+            if (Document.status !== DocumentStatus.Ready)
+                return;
+            const page = Prefs.positionFor(Document.filePath);
+            if (page > 0 && page < Document.pageCount)
+                pageView.goToPage(page);
+        }
     }
 
     // The native title bar and window backdrop are not QML, so they have to be
@@ -87,7 +157,21 @@ ApplicationWindow {
                 pageView.editingRun = null;
         }
     }
-    Shortcut { sequence: "Ctrl+Shift+D"; onActivated: Tokens.dark = !Tokens.dark }
+    // One place that flips the theme, so the preference can never drift from
+    // what is on screen.
+    function toggleTheme() {
+        Tokens.dark = !Tokens.dark;
+        Prefs.theme = Tokens.dark ? "dark" : "light";
+    }
+
+    Shortcut { sequence: "Ctrl+Shift+D"; onActivated: window.toggleTheme() }
+
+    Shortcut {
+        sequences: [StandardKey.Print]
+        enabled: Document.status === DocumentStatus.Ready
+        onActivated: printSheet.open()
+    }
+    Shortcut { sequence: "Ctrl+,"; onActivated: settingsSheet.open() }
 
     Shortcut {
         sequences: [StandardKey.Save]
@@ -222,6 +306,14 @@ ApplicationWindow {
             active: Document.modified
             anchors.verticalCenter: parent.verticalCenter
             onClicked: Document.save()
+        }
+
+        LumenIconButton {
+            iconPath: Icons.print
+            tooltip: qsTr("Print…  (Ctrl+P)")
+            enabled: Document.status === DocumentStatus.Ready
+            anchors.verticalCenter: parent.verticalCenter
+            onClicked: printSheet.open()
         }
 
         LumenIconButton {
@@ -379,7 +471,14 @@ ApplicationWindow {
             iconPath: Tokens.dark ? Icons.sun : Icons.moon
             tooltip: qsTr("Toggle theme  (Ctrl+Shift+D)")
             anchors.verticalCenter: parent.verticalCenter
-            onClicked: Tokens.dark = !Tokens.dark
+            onClicked: window.toggleTheme()
+        }
+
+        LumenIconButton {
+            iconPath: Icons.settings
+            tooltip: qsTr("Settings  (Ctrl+,)")
+            anchors.verticalCenter: parent.verticalCenter
+            onClicked: settingsSheet.open()
         }
     }
 
@@ -477,9 +576,53 @@ ApplicationWindow {
     EmptyState {
         anchors.fill: pageView
         visible: Document.status !== DocumentStatus.Ready
+        // Locked counts as loading: the password sheet is on top, and showing
+        // "could not open that file" behind it would contradict it.
         loading: Document.status === DocumentStatus.Loading
+                 || Document.status === DocumentStatus.Locked
         errorText: Document.status === DocumentStatus.Error ? Document.errorString : ""
         onOpenRequested: openDialog.open()
+        onFileRequested: (path) => Document.open(Qt.resolvedUrl("file:///" + path))
+    }
+
+    PrintSheet {
+        id: printSheet
+        onToastRequested: (message) => toast.show(message)
+        onErrorRequested: (message) => toast.show(message, true)
+    }
+
+    PasswordSheet { id: passwordSheet }
+
+    SettingsSheet {
+        id: settingsSheet
+        onToastRequested: (message) => toast.show(message)
+    }
+
+    UpdateBanner {
+        id: updateBanner
+        anchors.top: toolbar.bottom
+        anchors.left: pageView.left
+        anchors.right: pageView.right
+        z: 40
+        onToastRequested: (message) => toast.show(message)
+        onErrorRequested: (message) => toast.show(message, true)
+    }
+
+    // External links are confirmed, always. The blue text in a PDF and the URI
+    // behind it are unrelated strings, and this application fetched neither.
+    LumenConfirm {
+        id: linkConfirm
+        title: qsTr("Open this link?")
+        body: qsTr("This link was written into the document and leads outside "
+                 + "LumenPDF:\n\n%1").arg(window.pendingUri)
+        confirmText: qsTr("Open")
+        onConfirmed: {
+            if (!Document.openExternalLink(window.pendingUri)) {
+                toast.show(qsTr("That link uses an address type LumenPDF will "
+                              + "not open."), true);
+            }
+            window.pendingUri = "";
+        }
     }
 
     // Everything that is real but not frequent enough to earn toolbar space.
@@ -489,6 +632,13 @@ ApplicationWindow {
         preferredWidth: 268
 
         items: [
+            {
+                label: qsTr("Print…"),
+                icon: Icons.print,
+                shortcut: "Ctrl+P",
+                action: () => printSheet.open()
+            },
+            { separator: true },
             {
                 label: qsTr("Export Pages as Images…"),
                 icon: Icons.image,

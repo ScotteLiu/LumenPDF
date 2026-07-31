@@ -1,0 +1,133 @@
+# Release.
+#
+# Triggered by pushing a v* tag. Builds, runs the full suite, packages, signs if
+# a certificate is configured, and publishes with SHA256SUMS.txt.
+#
+# The checksum file is not optional. LumenPDF's own updater refuses to download
+# a release that did not publish one, so a release without it is one users
+# cannot update to from inside the application.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-2022
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          host: windows
+          target: desktop
+          arch: win64_msvc2019_64
+          modules: qtshadertools
+          cache: true
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install Ninja and Inno Setup
+        run: |
+          choco install ninja --no-progress -y
+          choco install innosetup --no-progress -y
+        shell: pwsh
+
+      - name: Cache PDFium
+        id: pdfium-cache
+        uses: actions/cache@v4
+        with:
+          path: third_party/pdfium
+          key: pdfium-chromium-7961-win64
+
+      - name: Fetch PDFium
+        if: steps.pdfium-cache.outputs.cache-hit != 'true'
+        run: ./scripts/fetch-pdfium.ps1
+        shell: pwsh
+
+      - name: Check the tag matches the project version
+        run: |
+          $tag = "${{ github.event.inputs.tag || github.ref_name }}" -replace '^v', ''
+          $cmake = Get-Content CMakeLists.txt -Raw
+          if ($cmake -notmatch 'VERSION\s+(\d+\.\d+\.\d+)') { throw "No VERSION in CMakeLists.txt" }
+          $declared = $Matches[1]
+          if ($tag -ne $declared) {
+              throw "Tag v$tag does not match CMakeLists.txt version $declared"
+          }
+          Write-Host "Releasing $declared"
+        shell: pwsh
+
+      - name: Build
+        run: |
+          cmake -S . -B build/windows-release -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/windows-release
+          $windeployqt = Join-Path $env:QT_ROOT_DIR "bin\windeployqt.exe"
+          & $windeployqt --qmldir qml --no-translations --no-system-d3d-compiler `
+              build/windows-release/lumenpdf.exe
+        shell: pwsh
+
+      # A release that fails its own tests is not published.
+      - name: Run the test suite
+        run: ./scripts/run-tests.ps1 -SkipBuild
+        shell: pwsh
+        env:
+          QT_FORCE_STDERR_LOGGING: "1"
+
+      # Signing runs only when the repository has a certificate configured.
+      # Without the secrets these are empty and package.ps1 skips signing with a
+      # warning rather than failing -- an unsigned release is worse than no
+      # release, but not by enough to block one.
+      - name: Package
+        run: |
+          if ($env:SIGN_PFX_BASE64) {
+              $pfx = Join-Path $env:RUNNER_TEMP "signing.pfx"
+              [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:SIGN_PFX_BASE64))
+              $env:LUMEN_SIGN_PFX = $pfx
+              $env:LUMEN_SIGN_PASSWORD = $env:SIGN_PFX_PASSWORD
+          }
+          ./scripts/package.ps1
+          if ($env:LUMEN_SIGN_PFX) { Remove-Item $env:LUMEN_SIGN_PFX -Force }
+        shell: pwsh
+        env:
+          SIGN_PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_PFX_BASE64 }}
+          SIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PASSWORD }}
+
+      - name: Verify the checksum file covers every artefact
+        run: |
+          $dist = "build/dist"
+          $sums = Get-Content (Join-Path $dist "SHA256SUMS.txt")
+          $artefacts = Get-ChildItem $dist -File |
+                       Where-Object { $_.Name -ne "SHA256SUMS.txt" }
+          foreach ($a in $artefacts) {
+              $expected = (Get-FileHash $a.FullName -Algorithm SHA256).Hash.ToLower()
+              $line = $sums | Where-Object { $_ -match "\s\*?$([regex]::Escape($a.Name))$" }
+              if (-not $line) { throw "$($a.Name) has no checksum" }
+              if ($line.Split()[0] -ne $expected) { throw "$($a.Name) checksum mismatch" }
+              Write-Host "ok $($a.Name)"
+          }
+        shell: pwsh
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: build/dist/*
+          draft: true
+          generate_release_notes: true

@@ -11,6 +11,7 @@
 #include "cloud/GoogleAuth.h"
 #include "cloud/GoogleDrive.h"
 #include "bridge/PageOperations.h"
+#include "bridge/PrintController.h"
 #include "bridge/RedactionController.h"
 #include "bridge/SelectionController.h"
 
@@ -50,6 +51,7 @@ class DocumentController : public QObject {
     Q_PROPERTY(lumen::RedactionController *redact READ redact CONSTANT)
     Q_PROPERTY(lumen::FormController *forms READ forms CONSTANT)
     Q_PROPERTY(lumen::OcrController *ocr READ ocr CONSTANT)
+    Q_PROPERTY(lumen::PrintController *printer READ printer CONSTANT)
     Q_PROPERTY(lumen::GoogleAuth *google READ google CONSTANT)
     Q_PROPERTY(lumen::GoogleDrive *drive READ drive CONSTANT)
 
@@ -68,6 +70,9 @@ public:
         Loading,
         Ready,
         Error,
+        // The file is a valid PDF that needs a password. Kept apart from Error
+        // because the right response is a prompt, not a failure message.
+        Locked,
     };
     Q_ENUM(Status)
 
@@ -94,6 +99,7 @@ public:
     RedactionController *redact() const { return m_redact; }
     FormController *forms() const { return m_forms; }
     OcrController *ocr() const { return m_ocr; }
+    PrintController *printer() const { return m_print; }
     GoogleAuth *google() const { return m_google; }
     GoogleDrive *drive() const { return m_drive; }
 
@@ -115,6 +121,25 @@ public:
     Q_INVOKABLE void open(const QUrl &url);
     Q_INVOKABLE void close();
 
+    // Retries the document that reported Locked, with a password. The URL is
+    // remembered here rather than in QML so a dialog cannot lose it.
+    Q_INVOKABLE void unlock(const QString &password);
+    Q_INVOKABLE void cancelUnlock();
+
+    // -- Links ---------------------------------------------------------------
+
+    // The link under a point, as a map QML can read: { kind, pageIndex | uri,
+    // x, y, width, height }. `kind` is "none", "page" or "uri".
+    Q_INVOKABLE QVariantMap linkAt(int pageIndex, const QPointF &point) const;
+
+    // Number of followable links on a page. Exists so tests can assert link
+    // parsing without simulating a click.
+    Q_INVOKABLE int linkCount(int pageIndex) const;
+
+    // Hands a URI to the shell, but only http, https and mailto. Returns false
+    // for anything else, which the UI reports rather than swallowing.
+    Q_INVOKABLE bool openExternalLink(const QString &uri);
+
     // Page width in PDF points. Returns 0 for an out-of-range index.
     Q_INVOKABLE double pageWidthPoints(int index) const;
 
@@ -135,6 +160,11 @@ signals:
     void saved(const QString &filePath);
     void saveFailed(const QString &reason);
 
+    // `retry` is true when a password was already tried and rejected, which is
+    // the only way to tell "locked" from "wrong" -- PDFium reports one error
+    // for both.
+    void passwordRequired(bool retry);
+
     // originalBytes/newBytes let the UI report the saving honestly, including
     // when there was none.
     void compressed(const QString &filePath, qint64 originalBytes, qint64 newBytes,
@@ -143,6 +173,9 @@ signals:
 private:
     void setStatus(Status status, const QString &error = {});
     void adoptDocument(const QSharedPointer<PdfDocument> &document);
+    void openWithPassword(const QUrl &url, const QString &password);
+
+    QUrl m_pendingUrl; // the locked document awaiting a password
 
     Status m_status = Status::Empty;
     QString m_title;
@@ -161,6 +194,7 @@ private:
     RedactionController *m_redact = nullptr;
     FormController *m_forms = nullptr;
     OcrController *m_ocr = nullptr;
+    PrintController *m_print = nullptr;
 
     QNetworkAccessManager *m_network = nullptr;
     GoogleAuth *m_google = nullptr;

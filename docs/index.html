@@ -395,9 +395,23 @@ footer .spacer { margin-left: auto; }
 
       <div class="card">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M3 17c3.5 0 4-11 7-11s1.5 9 4 9 2.5-4 4-4 2 2 3 2"/><path d="M4 21h16"/></svg>
-        <h3><span class="zh">手寫簽名</span><span class="en">Signatures</span></h3>
-        <p><span class="zh">直接畫，存成向量路徑而不是點陣圖——放大到 800% 依然銳利。</span>
-           <span class="en">Draw it. Stamped as vector paths rather than a bitmap, so it stays sharp at any zoom.</span></p>
+        <h3><span class="zh">手寫簽名（圖章）</span><span class="en">Handwritten signature (stamp)</span></h3>
+        <p><span class="zh">直接畫，存成向量路徑而不是點陣圖——放大到 800% 依然銳利。這是墨跡圖章，不是密碼學數位簽章：它不證明是誰簽的，也不會在文件被改動後失效。</span>
+           <span class="en">Draw it. Stamped as vector paths rather than a bitmap, so it stays sharp at any zoom. This is an ink stamp, not a cryptographic digital signature — it does not prove who signed, and it does not break if the document is altered afterwards.</span></p>
+      </div>
+
+      <div class="card">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M7 8V4h10v4"/><path d="M6 18H5a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-1"/><path d="M7 15h10v6H7z"/></svg>
+        <h3><span class="zh">列印</span><span class="en">Printing</span></h3>
+        <p><span class="zh">指定頁面範圍、份數、灰階、符合頁面或實際大小。也可以直接印成 PDF，而且會保留原本的頁面尺寸。畫面上看到什麼就印出什麼——標註、表單內容、OCR 文字層全都在。</span>
+           <span class="en">Page ranges, copies, greyscale, fit-to-page or actual size — and printing to a PDF file keeps the source page size. What is on screen is what comes out: annotations, filled fields and OCR layers included.</span></p>
+      </div>
+
+      <div class="card">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M6 11h12a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1z"/><path d="M8 11V7.5a4 4 0 1 1 8 0V11"/></svg>
+        <h3><span class="zh">加密文件與連結</span><span class="en">Encrypted files and links</span></h3>
+        <p><span class="zh">有密碼的 PDF 會請你輸入密碼，而不是說「打不開」；密碼只用一次，不會存起來。文件內的跳頁連結可以點，外部網址則一定先讓你看清楚真正的目標再開——PDF 上顯示的文字和它實際連到哪裡是兩回事。</span>
+           <span class="en">A password-protected PDF asks for the password instead of refusing to open; the password is used once and never stored. Internal jumps follow on click, external links always show you the real target first — what a PDF prints and where its link goes are unrelated strings.</span></p>
       </div>
 
       <div class="card">

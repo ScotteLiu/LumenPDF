@@ -8,14 +8,39 @@ like 2009. Acrobat can do everything and takes eight seconds to show you a
 page. Stirling-PDF has fifty tools and no coherent interface. LumenPDF is an
 attempt at all three at once.
 
-Status: **working editor.** Opens, renders, searches, selects, annotates, and
-saves. Text editing and OCR are not implemented yet.
+Status: **working editor.** Opens, renders, prints, searches, selects,
+annotates, redacts, fills forms, recognises scanned text, and saves.
 
 ## What works today
 
 **Reading** — open, render, scroll, zoom, fit-width, page thumbnails, document
 outline with collapsible sections, full-text search (245 pages and 1028 matches
-in 130 ms), match highlighting with a strong marker on the current hit.
+in 130 ms), match highlighting with a strong marker on the current hit. It
+reopens each document where you stopped reading, and remembers the last dozen
+files you opened.
+
+**Printing** — page ranges, copies, greyscale, fit-to-page or actual size, and
+printing to a PDF file that keeps the source page size. Pages are rasterised
+through the same engine that draws them on screen, so annotations, filled form
+fields and OCR layers all come out — rather than depending on the printer's own
+PDF interpreter.
+
+**Links** — internal jumps follow on click. External links never open without
+showing you the actual target first, because what a PDF prints and where its
+link points are unrelated strings. Only `http`, `https` and `mailto` are ever
+handed to the shell; a `Launch` action naming a program is not offered as a
+link at all.
+
+**Encrypted documents** — a password-protected PDF asks for its password
+instead of refusing to open. The password is used once and never written
+anywhere: this application has no keystore of its own, and storing someone
+else's document password without one is not a trade worth making.
+
+**Your language** — the interface is available in English, 繁體中文, 简体中文
+and 日本語, following the system locale by default. Only fully translated
+languages are offered; a partial translation produces a window in two languages
+and no error anywhere. Adding one is a single JSON file — see
+[translations/README.md](translations/README.md).
 
 **Selecting** — click-drag and double-click selection that follows the real
 text flow, including across columns and across pages. Copy to clipboard.
@@ -49,6 +74,10 @@ pages. Append another PDF, or export any page as its own file. Sign by drawing,
 stamped as vector paths rather than a bitmap. Everything that modifies the
 document is undoable. Save, with the annotations written as
 standards-conformant PDF markup that other PDF software reads.
+
+The signature is an **ink stamp**, not a cryptographic digital signature. It
+does not identify who signed and does not break if the document is altered
+afterwards. If you need a legally recognised signature, this is not it.
 
 **Redaction that actually redacts** — the selected text is destroyed, not
 covered. The affected page is rasterised and its objects replaced, so there is
@@ -157,10 +186,21 @@ that draws placeholder pages, which is enough to work on the UI.
 ./scripts/run-tests.ps1
 ```
 
-54 assertions, none of them a screenshot comparison. Fixtures are generated
-rather than committed — Latin and CJK samples by `src/app/TestFixtures.cpp`
-(QPdfWriter), the AcroForm sample by `scripts/make-form-fixture.ps1`, and ten
-deliberately broken files by `scripts/make-hostile-fixtures.ps1`.
+107 assertions, none of them a screenshot comparison, run on every push by
+[GitHub Actions](.github/workflows/build.yml).
+
+Fixtures are generated rather than committed — Latin, CJK and ten-script
+samples by `src/app/TestFixtures.cpp` (QPdfWriter), an AcroForm sample, a
+link-annotation sample, and ten deliberately broken files, each by its own
+script in `scripts/`.
+
+The encrypted fixture is the odd one: `scripts/make-encrypted-fixture.ps1`
+implements PDF 1.4's standard security handler — RC4, the key derivation, the
+`/O` and `/U` entries — in about a hundred lines of PowerShell, because no
+library on the build machine produces one and a downloaded encrypted PDF would
+be an opaque binary in the repository. It exists so the unlock path can be
+tested against a real encrypted file. LumenPDF reads these; it never writes
+them.
 
 The hostile set is empty files, truncated downloads, corrupted bodies, an xref
 pointing past the end, a page tree containing itself, a self-referential
@@ -201,9 +241,21 @@ reorder pages, merge, split, save~~ ✅ **complete**
 **v1** — complete: installer, export, true redaction, signatures, compression,
 form filling, and text correction.
 
-**v2** — OCR, batch processing, split-view comparison, AI summarisation, and
-real text editing (see the caveat below).
-**v2** — OCR, batch processing, split-view comparison, AI summarisation.
+**v2** — ~~OCR~~, ~~printing~~, ~~links~~, ~~encrypted documents~~,
+~~persisted settings and recent files~~, ~~UI translations~~, ~~CI~~ ✅
+
+**Next, in rough order of how much their absence hurts:**
+
+| | |
+|---|---|
+| Annotation review | Sticky notes, shapes, and a sidebar listing every annotation. Today you can create markup but not browse or delete it from one place. |
+| Tabs | One document at a time. |
+| Cryptographic signatures | Both signing and verification. The current signature is an ink stamp — see above. |
+| Page composition | Insert a blank page, crop, watermark, page numbers, split into several files. |
+| Conversion | PDF → Word, and images or Office documents → PDF. |
+| More languages | The infrastructure ships; each new one is a single JSON file. |
+| macOS and Linux | All platform-specific code is already isolated in `src/platform/`. |
+| Code signing | Implemented in `scripts/package.ps1`, waiting on a certificate — see [docs/CODE-SIGNING.md](docs/CODE-SIGNING.md). |
 
 ## Licensing
 

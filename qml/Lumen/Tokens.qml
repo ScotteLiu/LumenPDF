@@ -22,6 +22,12 @@ QtObject {
     readonly property color accentPressed:   dark ? "#0972D3" : "#0062C4"
     readonly property color accentSubtle:    Qt.rgba(tokens.accent.r, tokens.accent.g, tokens.accent.b, 0.14)
 
+    // The one exception to "exactly one accent". Refusals and destructive
+    // actions have to be distinguishable from ordinary emphasis without being
+    // read, and nothing but colour does that job.
+    readonly property color danger:          dark ? "#FF453A" : "#D70015"
+    readonly property color dangerSubtle:    Qt.rgba(tokens.danger.r, tokens.danger.g, tokens.danger.b, 0.14)
+
     readonly property color background:      dark ? "#1C1C1E" : "#FFFFFF"
     readonly property color surface:         dark ? "#242426" : "#F5F5F7"
     readonly property color surfaceElevated: dark ? "#2C2C2E" : "#FFFFFF"

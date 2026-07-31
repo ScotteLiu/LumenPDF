@@ -59,4 +59,15 @@ QtObject {
 
     readonly property string thumbnails:   "M4 4h6v6H4z M14 4h6v6h-6z M4 14h6v6H4z M14 14h6v6h-6z"
     readonly property string outline:      "M4 6h3 M10 6h10 M4 12h3 M10 12h10 M4 18h3 M10 18h10"
+
+    readonly property string chevronUp:    "M6 14.5l6-6 6 6"
+    readonly property string chevronDown:  "M6 9.5l6 6 6-6"
+
+    readonly property string print:        "M7 8V4h10v4 M6 18H5a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-1 M7 15h10v6H7z M17.5 11.5h.01"
+    readonly property string lock:         "M6 11h12a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1z M8 11V7.5a4 4 0 1 1 8 0V11 M12 15v3"
+    readonly property string link:         "M10.5 13.5a4 4 0 0 0 5.7 0l2.8-2.8a4 4 0 0 0-5.7-5.7l-1.6 1.6 M13.5 10.5a4 4 0 0 0-5.7 0l-2.8 2.8a4 4 0 0 0 5.7 5.7l1.6-1.6"
+    readonly property string settings:     "M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1v.3a2 2 0 1 1-4 0v-.2a1.6 1.6 0 0 0-2.8-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 3.5 15h-.3a2 2 0 1 1 0-4h.2A1.6 1.6 0 0 0 4.5 8.2l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3h.1A1.6 1.6 0 0 0 10.2 4v-.3a2 2 0 1 1 4 0v.2a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8v.1a1.6 1.6 0 0 0 1.4.9h.3a2 2 0 1 1 0 4h-.2a1.6 1.6 0 0 0-1.5.9z"
+    readonly property string clock:        "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M12 7v5l3.5 2"
+    readonly property string download:     "M12 3v12 M8 11l4 4 4-4 M4 19h16"
+    readonly property string globe:        "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M3.5 9h17 M3.5 15h17 M12 3a14 14 0 0 1 0 18 M12 3a14 14 0 0 0 0 18"
 }

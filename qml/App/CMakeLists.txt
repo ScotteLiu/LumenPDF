@@ -15,6 +15,12 @@
         DemoRunner.qml
         OcrPanel.qml
         EmptyState.qml
+        PrintSheet.qml
+        PasswordSheet.qml
+        SettingsSheet.qml
+        UpdateBanner.qml
+        NumberField.qml
+        ToggleRow.qml
 )
 
 target_link_libraries(App PRIVATE Qt6::Quick)

@@ -233,7 +233,14 @@ bool PdfDocument::load(const QString &filePath, const QString &password)
     if (!doc) {
         switch (FPDF_GetLastError()) {
         case FPDF_ERR_PASSWORD:
-            m_lastError = QStringLiteral("This document is password protected.");
+            // Separated from every other failure so the UI can ask for a
+            // password rather than declaring the file broken. PDFium reports
+            // the same error for "no password given" and "wrong password", so
+            // the caller distinguishes them by whether it had already tried.
+            m_needsPassword = true;
+            m_lastError = password.isEmpty()
+                              ? QStringLiteral("This document is password protected.")
+                              : QStringLiteral("That password is not correct.");
             break;
         case FPDF_ERR_FORMAT:
             m_lastError = QStringLiteral("This file is not a valid PDF.");
@@ -247,6 +254,12 @@ bool PdfDocument::load(const QString &filePath, const QString &password)
     }
 
     m_handle = doc;
+    m_needsPassword = false;
+
+    // 0xFFFFFFFF is PDFium's "no security handler". Anything else means the
+    // file was encrypted and we got in, either with the supplied password or
+    // because the user password is empty and only permissions were set.
+    m_encrypted = FPDF_GetDocPermissions(doc) != 0xFFFFFFFF;
 
     const int count = FPDF_GetPageCount(doc);
     m_pages.reserve(count);
@@ -365,6 +378,8 @@ void PdfDocument::close()
     m_outline.clear();
     m_filePath.clear();
     m_valid = false;
+    m_needsPassword = false;
+    m_encrypted = false;
 }
 
 PdfDocument::PageInfo PdfDocument::pageInfo(int index) const
@@ -1455,6 +1470,156 @@ int PdfDocument::annotationCount(int pageIndex) const
 #endif
 }
 
+#ifdef LUMEN_HAS_PDFIUM
+namespace {
+
+// Turns one PDFium link annotation into a LinkTarget.
+//
+// Two things are deliberately narrow here. A destination is only accepted when
+// it resolves to a page in *this* document -- a remote go-to names another file
+// and is treated as unsupported rather than followed. And only GoTo and URI
+// actions are honoured at all: Launch would start a program named by the
+// document, which is not something a viewer should do on a click.
+LinkTarget resolveLink(FPDF_DOCUMENT doc, FPDF_LINK link, double pageHeight)
+{
+    LinkTarget target;
+    if (!link)
+        return target;
+
+    FS_RECTF rect {};
+    if (FPDFLink_GetAnnotRect(link, &rect)) {
+        const double left = qMin(rect.left, rect.right);
+        const double right = qMax(rect.left, rect.right);
+        const double bottom = qMin(rect.top, rect.bottom);
+        const double top = qMax(rect.top, rect.bottom);
+        // Back to a top-left origin, the space everything above the backend
+        // works in.
+        target.rect = QRectF(left, pageHeight - top, right - left, top - bottom);
+    }
+
+    // A link can carry a destination directly, or wrap one in an action.
+    if (FPDF_DEST dest = FPDFLink_GetDest(doc, link)) {
+        const int page = FPDFDest_GetDestPageIndex(doc, dest);
+        if (page >= 0) {
+            target.kind = LinkTarget::Kind::Page;
+            target.pageIndex = page;
+            return target;
+        }
+    }
+
+    FPDF_ACTION action = FPDFLink_GetAction(link);
+    if (!action)
+        return target;
+
+    switch (FPDFAction_GetType(action)) {
+    case PDFACTION_GOTO: {
+        FPDF_DEST dest = FPDFAction_GetDest(doc, action);
+        const int page = dest ? FPDFDest_GetDestPageIndex(doc, dest) : -1;
+        if (page >= 0) {
+            target.kind = LinkTarget::Kind::Page;
+            target.pageIndex = page;
+        }
+        break;
+    }
+    case PDFACTION_URI: {
+        // Two calls: the first asks how many bytes, including the terminator.
+        const unsigned long size = FPDFAction_GetURIPath(doc, action, nullptr, 0);
+        if (size > 1 && size < 64 * 1024) {
+            QByteArray buffer(static_cast<int>(size), '\0');
+            const unsigned long written =
+                FPDFAction_GetURIPath(doc, action, buffer.data(), size);
+            if (written > 1) {
+                buffer.resize(static_cast<int>(written) - 1); // drop the NUL
+                const QString uri = QString::fromUtf8(buffer).trimmed();
+                if (!uri.isEmpty()) {
+                    target.kind = LinkTarget::Kind::Uri;
+                    target.uri = uri;
+                }
+            }
+        }
+        break;
+    }
+    default:
+        break; // Launch, remote go-to, embedded go-to: not followed.
+    }
+
+    return target;
+}
+
+} // namespace
+#endif
+
+LinkTarget PdfDocument::linkAt(int pageIndex, const QPointF &point) const
+{
+    LinkTarget target;
+    if (!m_valid || pageIndex < 0 || pageIndex >= m_pages.size())
+        return target;
+
+#ifdef LUMEN_HAS_PDFIUM
+    QMutexLocker locker(&m_mutex);
+    if (!m_handle)
+        return target;
+
+    auto doc = static_cast<FPDF_DOCUMENT>(m_handle);
+
+    // Never close-pair a page the form environment is holding: PDFium caches
+    // page objects per document, so closing it here would destroy widget state
+    // belonging to whoever is editing that page.
+    const bool held = (m_formPageIndex == pageIndex && m_formPage);
+    FPDF_PAGE page = held ? static_cast<FPDF_PAGE>(m_formPage)
+                          : FPDF_LoadPage(doc, pageIndex);
+    if (!page)
+        return target;
+
+    const double pageHeight = m_pages.at(pageIndex).sizePoints.height();
+    FPDF_LINK link = FPDFLink_GetLinkAtPoint(page, point.x(), pageHeight - point.y());
+    target = resolveLink(doc, link, pageHeight);
+
+    if (!held)
+        FPDF_ClosePage(page);
+    return target;
+#else
+    Q_UNUSED(point)
+    return target;
+#endif
+}
+
+QVector<LinkTarget> PdfDocument::links(int pageIndex) const
+{
+    QVector<LinkTarget> result;
+    if (!m_valid || pageIndex < 0 || pageIndex >= m_pages.size())
+        return result;
+
+#ifdef LUMEN_HAS_PDFIUM
+    QMutexLocker locker(&m_mutex);
+    if (!m_handle)
+        return result;
+
+    auto doc = static_cast<FPDF_DOCUMENT>(m_handle);
+    const bool held = (m_formPageIndex == pageIndex && m_formPage);
+    FPDF_PAGE page = held ? static_cast<FPDF_PAGE>(m_formPage)
+                          : FPDF_LoadPage(doc, pageIndex);
+    if (!page)
+        return result;
+
+    const double pageHeight = m_pages.at(pageIndex).sizePoints.height();
+
+    int position = 0;
+    FPDF_LINK link = nullptr;
+    while (FPDFLink_Enumerate(page, &position, &link)) {
+        const LinkTarget target = resolveLink(doc, link, pageHeight);
+        if (target.kind != LinkTarget::Kind::None)
+            result.append(target);
+    }
+
+    if (!held)
+        FPDF_ClosePage(page);
+    return result;
+#else
+    return result;
+#endif
+}
+
 int PdfDocument::annotationAt(int pageIndex, const QPointF &point) const
 {
     if (!m_valid || pageIndex < 0 || pageIndex >= m_pages.size())
@@ -1465,7 +1630,11 @@ int PdfDocument::annotationAt(int pageIndex, const QPointF &point) const
     if (!m_handle)
         return -1;
 
-    FPDF_PAGE page = FPDF_LoadPage(static_cast<FPDF_DOCUMENT>(m_handle), pageIndex);
+    // Same rule as linkAt: a page the form environment holds is shared, never
+    // close-paired here.
+    const bool held = (m_formPageIndex == pageIndex && m_formPage);
+    FPDF_PAGE page = held ? static_cast<FPDF_PAGE>(m_formPage)
+                          : FPDF_LoadPage(static_cast<FPDF_DOCUMENT>(m_handle), pageIndex);
     if (!page)
         return -1;
 
@@ -1499,7 +1668,8 @@ int PdfDocument::annotationAt(int pageIndex, const QPointF &point) const
             break;
     }
 
-    FPDF_ClosePage(page);
+    if (!held)
+        FPDF_ClosePage(page);
     return found;
 #else
     Q_UNUSED(point)

@@ -1,6 +1,9 @@
+#include "app/Settings.h"
 #include "app/StateReport.h"
 #include "app/TestFixtures.h"
 #include "app/Timing.h"
+#include "app/UpdateChecker.h"
+#include "bridge/PrintController.h"
 #include "bridge/AnnotationController.h"
 #include "bridge/DocumentController.h"
 #include "bridge/OutlineModel.h"
@@ -17,13 +20,43 @@
 
 #include <QGuiApplication>
 #include <QIcon>
+#include <QLibraryInfo>
+#include <QLocale>
+#include <QNetworkAccessManager>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QTimer>
+#include <QTranslator>
 
 namespace {
+
+// Loads the interface language.
+//
+// `preferred` is a locale name from settings, or empty to follow the system --
+// which is the default, because guessing English for everyone is exactly the
+// assumption this project keeps having to unlearn.
+//
+// Two translators are installed: Qt's own, for the standard dialogs and text
+// Qt itself produces, and ours. Installing them in this order means our
+// strings win where both define one.
+void installTranslations(QCoreApplication &app, const QString &preferred)
+{
+    const QLocale locale = preferred.isEmpty() ? QLocale::system() : QLocale(preferred);
+
+    auto *qtTranslator = new QTranslator(&app);
+    if (qtTranslator->load(locale, QStringLiteral("qtbase"), QStringLiteral("_"),
+                           QLibraryInfo::path(QLibraryInfo::TranslationsPath))) {
+        app.installTranslator(qtTranslator);
+    }
+
+    auto *appTranslator = new QTranslator(&app);
+    if (appTranslator->load(locale, QStringLiteral("lumenpdf"), QStringLiteral("_"),
+                            QStringLiteral(":/i18n"))) {
+        app.installTranslator(appTranslator);
+    }
+}
 
 // UI capture mode, used for screenshot review and visual regression checks.
 //
@@ -35,7 +68,8 @@ namespace {
 //   LUMEN_CAPTURE=work\ui-check\shot.png  LUMEN_CAPTURE_DELAY=3000  lumenpdf.exe file.pdf
 void installCaptureHook(QQmlApplicationEngine &engine,
                         lumen::DocumentController *controller,
-                        lumen::PlatformWindow *platform)
+                        lumen::PlatformWindow *platform,
+                        lumen::Settings *settings)
 {
     const QByteArray shotTarget = qgetenv("LUMEN_CAPTURE");
     const QByteArray reportTarget = qgetenv("LUMEN_REPORT");
@@ -46,14 +80,14 @@ void installCaptureHook(QQmlApplicationEngine &engine,
     const int delayMs = qEnvironmentVariableIntValue("LUMEN_CAPTURE_DELAY", &ok);
 
     QTimer::singleShot(ok && delayMs > 0 ? delayMs : 2500, &engine,
-                       [&engine, shotTarget, reportTarget, controller, platform] {
+                       [&engine, shotTarget, reportTarget, controller, platform, settings] {
         int exitCode = 0;
 
         // The state report comes first: it is what the tests assert on, and it
         // should still be written even if grabbing the window fails.
         if (!reportTarget.isEmpty()) {
             const QString path = QString::fromLocal8Bit(reportTarget);
-            if (lumen::report::write(path, controller, platform)) {
+            if (lumen::report::write(path, controller, platform, settings)) {
                 qInfo("report: wrote %s", qPrintable(path));
             } else {
                 qWarning("report: failed to write %s", qPrintable(path));
@@ -101,7 +135,16 @@ int main(int argc, char *argv[])
     // D3D11 is the safe default on Windows; the backend gets revisited when
     // macOS (Metal) and Linux (Vulkan/OpenGL) come online.
 #ifdef Q_OS_WIN
-    QQuickWindow::setGraphicsApi(QSGRendererInterface::Direct3D11);
+    // LUMEN_GRAPHICS exists for continuous integration, where there is no GPU
+    // and D3D11 falls back to a software rasteriser that is occasionally
+    // absent. It is not a user-facing setting.
+    const QByteArray backend = qgetenv("LUMEN_GRAPHICS");
+    if (backend == "software")
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::Software);
+    else if (backend == "opengl")
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
+    else
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::Direct3D11);
 #endif
 
     QGuiApplication app(argc, argv);
@@ -146,9 +189,27 @@ int main(int argc, char *argv[])
     controller->setImageProvider(provider);
 
     auto *platform = new lumen::PlatformWindow(&engine);
+    auto *settings = new lumen::Settings(&engine);
+    installTranslations(app, settings->language());
+
+    // The update checker shares the controller's network stack rather than
+    // opening a second one; it is idle unless someone asks it to check.
+    auto *network = new QNetworkAccessManager(&engine);
+    auto *updates = new lumen::UpdateChecker(network, &engine);
+    QObject::connect(updates, &lumen::UpdateChecker::quitRequested,
+                     &app, &QCoreApplication::quit, Qt::QueuedConnection);
 
     qmlRegisterSingletonInstance("Lumen.Backend", 1, 0, "Document", controller);
     qmlRegisterSingletonInstance("Lumen.Backend", 1, 0, "Platform", platform);
+    qmlRegisterSingletonInstance("Lumen.Backend", 1, 0, "Prefs", settings);
+    qmlRegisterSingletonInstance("Lumen.Backend", 1, 0, "Updates", updates);
+
+    // Remember where each document was left, and offer it back on reopening.
+    QObject::connect(controller, &lumen::DocumentController::documentChanged,
+                     settings, [controller, settings] {
+                         if (controller->pageCount() > 0)
+                             settings->noteOpened(controller->filePath());
+                     });
     qmlRegisterUncreatableType<lumen::DocumentController>(
         "Lumen.Backend", 1, 0, "DocumentStatus",
         QStringLiteral("Use Document.status"));
@@ -427,7 +488,71 @@ int main(int argc, char *argv[])
                          Qt::SingleShotConnection);
     }
 
-    installCaptureHook(engine, controller, platform);
+    // Test hook: exercise the update checker's version ordering without a
+    // network call. "a,b" prints the comparison result.
+    if (qEnvironmentVariableIsSet("LUMEN_VERSION_COMPARE")) {
+        const QStringList parts = qEnvironmentVariable("LUMEN_VERSION_COMPARE").split(u',');
+        if (parts.size() == 2) {
+            qInfo("version-compare: %d",
+                  lumen::UpdateChecker::compareVersions(parts.at(0), parts.at(1)));
+        }
+    }
+
+    // Test hook: record a reading position, so a following run can assert that
+    // it came back. The QML side does this on a timer as the user scrolls.
+    if (qEnvironmentVariableIsSet("LUMEN_NOTE_PAGE")) {
+        const int page = qEnvironmentVariableIntValue("LUMEN_NOTE_PAGE");
+        QObject::connect(controller, &lumen::DocumentController::documentChanged,
+                         settings, [controller, settings, page] {
+                             if (controller->pageCount() > 0)
+                                 settings->notePosition(controller->filePath(), page);
+                         },
+                         Qt::SingleShotConnection);
+    }
+
+    // Test hook: supply a password for an encrypted document. Answering the
+    // request rather than passing it to open() is deliberate -- it exercises
+    // the same Locked -> unlock path the dialog uses.
+    if (qEnvironmentVariableIsSet("LUMEN_PASSWORD")) {
+        const QString password = qEnvironmentVariable("LUMEN_PASSWORD");
+        QObject::connect(controller, &lumen::DocumentController::passwordRequired,
+                         controller, [controller, password](bool retry) {
+                             if (retry) {
+                                 qWarning("password: rejected");
+                                 return; // Never loop on a wrong password.
+                             }
+                             controller->unlock(password);
+                         });
+    }
+
+    // Test hook: print to a PDF. "<path>[,<from>,<to>]", pages zero-based.
+    if (qEnvironmentVariableIsSet("LUMEN_PRINT")) {
+        const QStringList parts = qEnvironmentVariable("LUMEN_PRINT").split(u',');
+        QObject::connect(controller, &lumen::DocumentController::documentChanged,
+                         controller, [controller, parts] {
+                             if (controller->pageCount() <= 0 || parts.isEmpty())
+                                 return;
+
+                             auto *printer = controller->printer();
+                             QObject::connect(printer, &lumen::PrintController::finished,
+                                              qApp, [](int pages) {
+                                                  qInfo("print: %d pages", pages);
+                                              });
+                             QObject::connect(printer, &lumen::PrintController::failed,
+                                              qApp, [](const QString &reason) {
+                                                  qWarning("print failed: %s",
+                                                           qPrintable(reason));
+                                              });
+
+                             printer->printToFile(QUrl::fromLocalFile(parts.at(0)),
+                                                  parts.size() >= 2 ? parts.at(1).toInt() : -1,
+                                                  parts.size() >= 3 ? parts.at(2).toInt() : -1,
+                                                  false, true);
+                         },
+                         Qt::SingleShotConnection);
+    }
+
+    installCaptureHook(engine, controller, platform, settings);
 
     result = app.exec();
     }

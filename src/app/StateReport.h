@@ -6,6 +6,7 @@ namespace lumen {
 
 class DocumentController;
 class PlatformWindow;
+class Settings;
 
 // Dumps the document's observable state as JSON.
 //
@@ -18,7 +19,8 @@ namespace report {
 
 bool write(const QString &filePath,
            DocumentController *controller,
-           PlatformWindow *platform = nullptr);
+           PlatformWindow *platform = nullptr,
+           Settings *settings = nullptr);
 
 } // namespace report
 } // namespace lumen

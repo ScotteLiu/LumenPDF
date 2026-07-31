@@ -1,7 +1,11 @@
 cmake_minimum_required(VERSION 3.24)
 
 project(LumenPDF
-    VERSION 0.1.0
+    # Bump this before tagging. The release workflow refuses to publish a tag
+    # that does not match it -- v0.2.0 shipped a binary that reported 0.1.0,
+    # which the update checker would have read as "an update is available"
+    # forever.
+    VERSION 0.3.0
     DESCRIPTION "A fast, elegant PDF viewer and editor"
     LANGUAGES CXX
 )
@@ -27,7 +31,8 @@ option(LUMEN_WITH_PDFIUM "Build against PDFium (requires third_party/pdfium)" ON
 # Qt
 # ---------------------------------------------------------------------------
 find_package(Qt6 6.7 REQUIRED COMPONENTS
-    Core Gui Quick QuickControls2 Concurrent Network ShaderTools)
+    Core Gui Quick QuickControls2 Concurrent Network PrintSupport ShaderTools
+    LinguistTools)
 
 qt_standard_project_setup(REQUIRES 6.7)
 
@@ -107,6 +112,13 @@ qt_add_executable(lumenpdf
     src/bridge/FormController.cpp
     src/bridge/OcrController.h
     src/bridge/OcrController.cpp
+    src/bridge/PrintController.h
+    src/bridge/PrintController.cpp
+
+    src/app/Settings.h
+    src/app/Settings.cpp
+    src/app/UpdateChecker.h
+    src/app/UpdateChecker.cpp
 
     src/ocr/OcrEngine.h
     src/ocr/OcrEngine.cpp
@@ -134,6 +146,7 @@ target_link_libraries(lumenpdf PRIVATE
     Qt6::QuickControls2
     Qt6::Concurrent
     Qt6::Network
+    Qt6::PrintSupport
 )
 
 if(LUMEN_PDFIUM_FOUND)
@@ -207,6 +220,33 @@ add_subdirectory(qml/Lumen)
 add_subdirectory(qml/App)
 
 target_link_libraries(lumenpdf PRIVATE Lumenplugin Appplugin)
+
+# ---------------------------------------------------------------------------
+# Translations
+# ---------------------------------------------------------------------------
+#
+# Compiled into the binary rather than shipped as loose .qm files: a missing
+# translation file turns the interface English with no error, which is a bug
+# nobody reports.
+#
+# `lupdate` is run by hand via scripts/update-translations.ps1 -- wiring it into
+# the build would rewrite the .ts files on every configure and bury real
+# translation changes in churn.
+# Only complete translations are built in. A .qm with missing entries falls
+# back to English string by string, which produces a half-translated window and
+# no error anywhere -- worse than the language simply not being offered.
+# translations/README.md says how to add one.
+set(LUMEN_TS_FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/translations/lumenpdf_zh_TW.ts
+    ${CMAKE_CURRENT_SOURCE_DIR}/translations/lumenpdf_zh_CN.ts
+    ${CMAKE_CURRENT_SOURCE_DIR}/translations/lumenpdf_ja.ts
+)
+
+qt_add_translations(lumenpdf
+    TS_FILES ${LUMEN_TS_FILES}
+    RESOURCE_PREFIX "/i18n"
+    LUPDATE_OPTIONS -no-obsolete -locations none
+)
 
 # ---------------------------------------------------------------------------
 # Runtime deployment
