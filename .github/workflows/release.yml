@@ -36,7 +36,7 @@ jobs:
           version: "6.8.3"
           host: windows
           target: desktop
-          arch: win64_msvc2019_64
+          arch: win64_msvc2022_64
           modules: qtshadertools
           cache: true
 
