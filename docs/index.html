@@ -513,6 +513,18 @@ footer .spacer { margin-left: auto; }
       </div>
 
       <div class="note">
+        <h3><span class="zh">簽名是圖章，不是數位簽章</span><span class="en">The signature is a stamp, not a digital signature</span></h3>
+        <p><span class="zh">畫上去的簽名是一個向量墨跡圖章。它不證明簽名的人是誰，文件事後被改動也不會失效。需要有法律效力的電子簽署，請用別的工具——LumenPDF 目前不提供 PKI 數位簽章，也不做簽章驗證。</span>
+           <span class="en">A drawn signature is a vector ink stamp. It does not prove who signed, and it does not break if the document is altered afterwards. If you need a legally recognised electronic signature, use something else — LumenPDF does not currently create or verify PKI digital signatures.</span></p>
+      </div>
+
+      <div class="card">
+        <h3><span class="zh">安裝檔沒有數位簽章</span><span class="en">The installer is not code-signed</span></h3>
+        <p><span class="zh">Windows SmartScreen 第一次執行時會警告，要按「其他資訊 → 仍要執行」。程式碼本身沒有任何不同——那個警告是關於發行者身分未經驗證。憑證是發給經過驗證的法律實體、每年數百美元的東西；簽章功能已經寫好在等憑證。每個版本都附 SHA256SUMS.txt，可以自己核對下載檔。</span>
+           <span class="en">Windows SmartScreen warns on first run — <em>More info → Run anyway</em>. Nothing about the code is different; the warning is about the publisher being unidentified. A certificate is issued to a verified legal entity and costs a few hundred dollars a year, and the signing support is implemented and waiting for one. Every release publishes SHA256SUMS.txt so you can check the download yourself.</span></p>
+      </div>
+
+      <div class="card">
         <h3><span class="zh">目前只有 Windows</span><span class="en">Windows only, for now</span></h3>
         <p><span class="zh">macOS 和 Linux 在規劃中。所有平台相關的程式碼從第一天就隔離在一個檔案裡，圖形後端也只在一個地方選擇——但「能編譯」和「能用」是兩回事，所以還沒承諾時程。</span>
            <span class="en">macOS and Linux are planned. Every platform-specific call has been confined to one file since day one and the graphics backend is chosen in one place — but compiling and shipping are different things, so there is no date.</span></p>
