@@ -75,12 +75,7 @@ jobs:
         shell: pwsh
 
       - name: Build
-        run: |
-          cmake -S . -B build/windows-release -G Ninja -DCMAKE_BUILD_TYPE=Release
-          cmake --build build/windows-release
-          $windeployqt = Join-Path $env:QT_ROOT_DIR "bin\windeployqt.exe"
-          & $windeployqt --qmldir qml --no-translations --no-system-d3d-compiler `
-              build/windows-release/lumenpdf.exe
+        run: ./scripts/build.ps1
         shell: pwsh
 
       # A release that fails its own tests is not published.

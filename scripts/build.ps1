@@ -38,6 +38,15 @@ $preset = "windows-$Config"
 
 # -- Qt ---------------------------------------------------------------------
 $qtRoot = $env:LUMEN_QT_DIR
+
+# QT_ROOT_DIR is what jurplel/install-qt-action exports, so CI needs no
+# special-casing -- and neither does anyone whose Qt lives outside C:\Qt.
+if (-not $qtRoot -and $env:QT_ROOT_DIR) {
+    if (Test-Path (Join-Path $env:QT_ROOT_DIR "lib\cmake\Qt6")) {
+        $qtRoot = $env:QT_ROOT_DIR
+    }
+}
+
 if (-not $qtRoot) {
     $candidates = Get-ChildItem "C:\Qt" -Directory -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -match '^6\.\d+\.\d+$' } |
@@ -48,7 +57,7 @@ if (-not $qtRoot) {
     }
 }
 if (-not $qtRoot) {
-    throw "Could not find a Qt 6 MSVC install. Set LUMEN_QT_DIR to e.g. C:\Qt\6.8.3\msvc2022_64"
+    throw "Could not find a Qt 6 MSVC install. Set LUMEN_QT_DIR to e.g. C:\Qt\6.8.3\msvc2022_64 (QT_ROOT_DIR is honoured too)."
 }
 Write-Host "Qt        : $qtRoot"
 

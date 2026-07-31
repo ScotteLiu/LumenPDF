@@ -305,24 +305,25 @@ $iscc = @(
     "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
 ) | Where-Object { Test-Path $_ } | Select-Object -First 1
 
+# Missing Inno Setup skips the installer but must not skip the checksums --
+# returning early here once meant the portable zip shipped unverifiable.
 if (-not $iscc) {
     Write-Warning "Inno Setup not found -- skipping the installer. Install it with: winget install JRSoftware.InnoSetup"
-    exit 0
-}
-
-Write-Host ""
-Write-Host "--- installer ---" -ForegroundColor Cyan
-& $iscc `
-    "/DStageDir=$stageDir" `
-    "/DAppVersion=$version" `
-    (Join-Path $repoRoot "packaging\lumenpdf.iss") | Select-Object -Last 6
-if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
-
-$setup = Join-Path $distDir "LumenPDF-$version-win64-setup.exe"
-if (Test-Path $setup) {
-    Invoke-Sign $setup
+} else {
     Write-Host ""
-    Write-Host "Installer : $setup ($([math]::Round((Get-Item $setup).Length / 1MB, 1)) MB)" -ForegroundColor Green
+    Write-Host "--- installer ---" -ForegroundColor Cyan
+    & $iscc `
+        "/DStageDir=$stageDir" `
+        "/DAppVersion=$version" `
+        (Join-Path $repoRoot "packaging\lumenpdf.iss") | Select-Object -Last 6
+    if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
+
+    $setup = Join-Path $distDir "LumenPDF-$version-win64-setup.exe"
+    if (Test-Path $setup) {
+        Invoke-Sign $setup
+        Write-Host ""
+        Write-Host "Installer : $setup ($([math]::Round((Get-Item $setup).Length / 1MB, 1)) MB)" -ForegroundColor Green
+    }
 }
 
 # -- 5. Checksums -----------------------------------------------------------
