@@ -165,9 +165,9 @@ if (Start-Case "search-latin-none") {
 }
 
 if (Start-Case "select-word-latin") {
-    $r = Invoke-Lumen -Pdf $latin -Hooks @{ LUMEN_SELECT_WORD = "0,90,150" } -Name "word-latin"
+    $r = Invoke-Lumen -Pdf $latin -Hooks @{ LUMEN_SELECT_WORD = "0,find:cycle" } -Name "word-latin"
     if ($r.ok) {
-        Assert-Equal "The" $r.report.selectionText "double-click selects a whole Latin word"
+        Assert-Equal "cycle" $r.report.selectionText "double-click selects a whole Latin word"
     }
 }
 
@@ -436,7 +436,7 @@ if (Start-Case "text-edit-refuses-to-corrupt") {
     # The heading is "Latin fixture page 1", so its subset has no 'b', 'd', 'y'
     # or 'm'. Asking for them must fail.
     Invoke-Lumen -Pdf $target -Name "textedit-refuse" -Hooks @{
-        LUMEN_EDIT_TEXT = "0,150,90,Edited by LumenPDF"
+        LUMEN_EDIT_TEXT = "0,find:Latin fixture page 1,Edited by LumenPDF"
         LUMEN_SAVE_AS = $target
     } | Out-Null
 
@@ -462,7 +462,7 @@ if (Start-Case "text-edit-applies-and-undoes") {
     Copy-Item $latin $target -Force
 
     Invoke-Lumen -Pdf $target -Name "textedit-apply" -Hooks @{
-        LUMEN_EDIT_TEXT = "0,150,90,Latin future page 1"
+        LUMEN_EDIT_TEXT = "0,find:Latin fixture page 1,Latin future page 1"
         LUMEN_SAVE_AS = $target
     } | Out-Null
 
@@ -480,7 +480,7 @@ if (Start-Case "text-edit-applies-and-undoes") {
     $undoTarget = Join-Path $scratch "textedit-undo.pdf"
     Copy-Item $latin $undoTarget -Force
     Invoke-Lumen -Pdf $undoTarget -Name "textedit-undo" -Hooks @{
-        LUMEN_EDIT_TEXT = "0,150,90,Latin future page 1,--undo"
+        LUMEN_EDIT_TEXT = "0,find:Latin fixture page 1,Latin future page 1,--undo"
         LUMEN_SAVE_AS = $undoTarget
     } | Out-Null
 

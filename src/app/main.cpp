@@ -258,17 +258,34 @@ int main(int argc, char *argv[])
                          Qt::SingleShotConnection);
     }
 
-    // Test hook: double-click word selection, as "page,x,y" in PDF points.
+    // Test hook: double-click word selection. Either "page,x,y" in PDF points,
+    // or "page,find:<text>" to click the middle of the first occurrence of
+    // some text -- which is what the tests use, because a baked coordinate
+    // follows the machine's font metrics and lands somewhere else on a runner.
     if (qEnvironmentVariableIsSet("LUMEN_SELECT_WORD")) {
         const QStringList parts = qEnvironmentVariable("LUMEN_SELECT_WORD").split(u',');
-        if (parts.size() == 3) {
+        if (parts.size() >= 2) {
             QObject::connect(controller, &lumen::DocumentController::documentChanged,
                              controller, [controller, parts] {
                                  if (controller->pageCount() <= 0)
                                      return;
-                                 controller->selection()->selectWordAt(
-                                     parts.at(0).toInt(),
-                                     QPointF(parts.at(1).toDouble(), parts.at(2).toDouble()));
+
+                                 const int page = parts.at(0).toInt();
+                                 QPointF point(-1, -1);
+
+                                 if (parts.at(1).startsWith(QLatin1String("find:"))) {
+                                     point = controller->pointOfText(
+                                         page, parts.mid(1).join(u',').mid(5));
+                                 } else if (parts.size() >= 3) {
+                                     point = QPointF(parts.at(1).toDouble(),
+                                                     parts.at(2).toDouble());
+                                 }
+
+                                 if (point.x() < 0) {
+                                     qWarning("select-word: nothing at that target");
+                                     return;
+                                 }
+                                 controller->selection()->selectWordAt(page, point);
                              },
                              Qt::SingleShotConnection);
         }
@@ -421,18 +438,29 @@ int main(int argc, char *argv[])
                          Qt::SingleShotConnection);
     }
 
-    // Test hook: edit the text run at a point. "<page>,<x>,<y>,<new text>".
+    // Test hook: edit a text run. Either "<page>,<x>,<y>,<new text>" or
+    // "<page>,find:<existing text>,<new text>" -- see LUMEN_SELECT_WORD above
+    // for why the tests use the second form.
     if (qEnvironmentVariableIsSet("LUMEN_EDIT_TEXT")) {
         const QStringList parts = qEnvironmentVariable("LUMEN_EDIT_TEXT").split(u',');
-        if (parts.size() >= 4) {
+        const bool byText = parts.size() >= 2
+                            && parts.at(1).startsWith(QLatin1String("find:"));
+        if (parts.size() >= (byText ? 3 : 4)) {
             QObject::connect(controller, &lumen::DocumentController::documentChanged,
-                             controller, [controller, parts] {
+                             controller, [controller, parts, byText] {
                                  if (controller->pageCount() <= 0)
                                      return;
 
                                  const int page = parts.at(0).toInt();
-                                 const QPointF point(parts.at(1).toDouble(),
-                                                     parts.at(2).toDouble());
+                                 const QPointF point =
+                                     byText ? controller->pointOfText(page, parts.at(1).mid(5))
+                                            : QPointF(parts.at(1).toDouble(),
+                                                      parts.at(2).toDouble());
+
+                                 if (point.x() < 0) {
+                                     qWarning("edit-text: target text not found");
+                                     return;
+                                 }
 
                                  const QVariantMap run = controller->textRunAt(page, point);
                                  if (!run.value(QStringLiteral("valid")).toBool()) {
@@ -440,9 +468,9 @@ int main(int argc, char *argv[])
                                      return;
                                  }
 
-                                 // Everything after the third comma is the new
-                                 // text, so it may contain commas itself.
-                                 const QString text = parts.mid(3).join(u',');
+                                 // Everything after the target is the new text,
+                                 // so it may contain commas itself.
+                                 const QString text = parts.mid(byText ? 2 : 3).join(u',');
                                  controller->pages()->editText(
                                      page,
                                      run.value(QStringLiteral("objectIndex")).toInt(),

@@ -143,6 +143,16 @@ public:
     // Page width in PDF points. Returns 0 for an out-of-range index.
     Q_INVOKABLE double pageWidthPoints(int index) const;
 
+    // The centre of the first occurrence of `needle` on a page, in PDF points,
+    // or (-1, -1) if it is not there.
+    //
+    // Exists for the tests. Baking click coordinates into them made two cases
+    // machine-dependent: the fixture's layout follows whatever font metrics the
+    // machine has, so a point that lands mid-word here landed on a space on a
+    // CI runner. Locating the target by its text is both stable and closer to
+    // what a user does -- they click the words they can see.
+    Q_INVOKABLE QPointF pointOfText(int pageIndex, const QString &needle) const;
+
     // Length of a page's extracted text. Exists so tests can assert that
     // redaction destroyed content, which a rendered black box cannot prove.
     Q_INVOKABLE int pageTextLength(int index) const;

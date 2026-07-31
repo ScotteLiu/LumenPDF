@@ -243,6 +243,19 @@ QVariantMap DocumentController::linkAt(int pageIndex, const QPointF &point) cons
     return map;
 }
 
+QPointF DocumentController::pointOfText(int pageIndex, const QString &needle) const
+{
+    if (!m_document || needle.isEmpty())
+        return QPointF(-1, -1);
+
+    const QVector<SearchHit> hits =
+        m_document->searchPage(pageIndex, needle, false, false);
+    if (hits.isEmpty() || hits.first().rects.isEmpty())
+        return QPointF(-1, -1);
+
+    return hits.first().rects.first().center();
+}
+
 int DocumentController::linkCount(int pageIndex) const
 {
     return m_document ? m_document->links(pageIndex).size() : 0;
