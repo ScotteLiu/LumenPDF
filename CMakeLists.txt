@@ -26,7 +26,8 @@ option(LUMEN_WITH_PDFIUM "Build against PDFium (requires third_party/pdfium)" ON
 # ---------------------------------------------------------------------------
 # Qt
 # ---------------------------------------------------------------------------
-find_package(Qt6 6.7 REQUIRED COMPONENTS Core Gui Quick QuickControls2 Concurrent ShaderTools)
+find_package(Qt6 6.7 REQUIRED COMPONENTS
+    Core Gui Quick QuickControls2 Concurrent Network ShaderTools)
 
 qt_standard_project_setup(REQUIRES 6.7)
 
@@ -104,6 +105,16 @@ qt_add_executable(lumenpdf
     src/bridge/RedactionController.cpp
     src/bridge/FormController.h
     src/bridge/FormController.cpp
+    src/bridge/OcrController.h
+    src/bridge/OcrController.cpp
+
+    src/ocr/OcrEngine.h
+    src/ocr/OcrEngine.cpp
+
+    src/cloud/GoogleAuth.h
+    src/cloud/GoogleAuth.cpp
+    src/cloud/GoogleDrive.h
+    src/cloud/GoogleDrive.cpp
 
     src/platform/PlatformWindow.h
     src/platform/PlatformWindow.cpp
@@ -122,6 +133,7 @@ target_link_libraries(lumenpdf PRIVATE
     Qt6::Quick
     Qt6::QuickControls2
     Qt6::Concurrent
+    Qt6::Network
 )
 
 if(LUMEN_PDFIUM_FOUND)
@@ -130,7 +142,56 @@ if(LUMEN_PDFIUM_FOUND)
 endif()
 
 if(WIN32)
-    target_link_libraries(lumenpdf PRIVATE dwmapi)
+    # -- OCR ----------------------------------------------------------------
+    #
+    # Windows ships an OCR engine, and using it means the installer stays at
+    # forty megabytes instead of carrying a hundred megabytes of Tesseract
+    # language data for languages most users will never open.
+    #
+    # C++/WinRT headers live in the Windows SDK next to the usual um/shared
+    # includes, and CMake does not add that directory itself.
+    get_filename_component(_win_sdk_um "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    set(LUMEN_CPPWINRT_DIR "")
+
+    foreach(_inc IN LISTS CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES)
+        if(_inc MATCHES "Windows Kits/10/[Ii]nclude/([0-9.]+)/um$")
+            string(REGEX REPLACE "/um$" "/cppwinrt" _candidate "${_inc}")
+            if(EXISTS "${_candidate}/winrt/base.h")
+                set(LUMEN_CPPWINRT_DIR "${_candidate}")
+            endif()
+        endif()
+    endforeach()
+
+    # The implicit include list is not always populated; fall back to looking
+    # in the standard install location for the newest SDK that has the headers.
+    if(NOT LUMEN_CPPWINRT_DIR)
+        file(GLOB _sdk_versions
+             "$ENV{ProgramFiles\(x86\)}/Windows Kits/10/Include/*/cppwinrt")
+        list(SORT _sdk_versions)
+        list(REVERSE _sdk_versions)
+        foreach(_candidate IN LISTS _sdk_versions)
+            if(EXISTS "${_candidate}/winrt/base.h")
+                set(LUMEN_CPPWINRT_DIR "${_candidate}")
+                break()
+            endif()
+        endforeach()
+    endif()
+
+    if(LUMEN_CPPWINRT_DIR)
+        target_include_directories(lumenpdf PRIVATE "${LUMEN_CPPWINRT_DIR}")
+        target_compile_definitions(lumenpdf PRIVATE LUMEN_HAS_WINDOWS_OCR=1)
+        target_link_libraries(lumenpdf PRIVATE windowsapp)
+        message(STATUS "LumenPDF: Windows OCR enabled (${LUMEN_CPPWINRT_DIR})")
+    else()
+        message(WARNING
+            "LumenPDF: no C++/WinRT headers found -- building without OCR.\n"
+            "  Install a Windows 10/11 SDK to enable it.")
+    endif()
+
+    # crypt32 provides the Data Protection API, which encrypts the stored Google
+    # refresh token against the Windows account rather than leaving a standing
+    # credential to someone's Drive sitting in a readable file.
+    target_link_libraries(lumenpdf PRIVATE dwmapi crypt32)
     set_target_properties(lumenpdf PROPERTIES WIN32_EXECUTABLE ON)
 
     # windows.h defines min/max as macros, which breaks std::numeric_limits<T>::max()

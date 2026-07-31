@@ -12,8 +12,11 @@
         SignaturePad.qml
         BenchmarkRunner.qml
         TextEditOverlay.qml
+        DemoRunner.qml
+        OcrPanel.qml
         EmptyState.qml
 )
 
 target_link_libraries(App PRIVATE Qt6::Quick)
+
 

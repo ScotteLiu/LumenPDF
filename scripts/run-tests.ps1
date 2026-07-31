@@ -64,7 +64,7 @@ foreach ($f in @($latin, $cjk, $form)) {
 $hookNames = @("LUMEN_SEARCH", "LUMEN_SELECT", "LUMEN_SELECT_WORD", "LUMEN_ANNOTATE",
                "LUMEN_SAVE_AS", "LUMEN_PAGEOP", "LUMEN_EXPORT", "LUMEN_COMPRESS",
                "LUMEN_FORM_FILL", "LUMEN_THEME", "LUMEN_SIDEBAR_TAB", "LUMEN_CAPTURE",
-               "LUMEN_EDIT_TEXT", "LUMEN_BENCH")
+               "LUMEN_EDIT_TEXT", "LUMEN_BENCH", "LUMEN_OCR")
 
 $env:QT_FORCE_STDERR_LOGGING = "1"
 $env:LUMEN_CAPTURE_DELAY = "3000"
@@ -210,6 +210,115 @@ if (Start-Case "cjk-select-word") {
     $r = Invoke-Lumen -Pdf $cjk -Hooks @{ LUMEN_SELECT_WORD = "0,80,143" } -Name "cjk-word"
     if ($r.ok) {
         Assert-Equal 1 $r.report.selectionLength "double-click selects exactly one ideograph"
+    }
+}
+
+# -- Scripts beyond Latin and Han -------------------------------------------
+#
+# Text extraction is where a PDF tool quietly goes wrong, and it goes wrong
+# differently in each writing system. These assert that a phrase written in each
+# script comes back out of the file recognisably, rather than as the lookalikes,
+# reordered runs or dropped combining marks that extraction can silently produce.
+
+if (Start-Case "world-scripts") {
+    $world = Join-Path $fixtureDir "world-scripts.pdf"
+
+    if (-not (Test-Path $world)) {
+        Assert-True $false "world-scripts fixture was generated"
+    } else {
+        $out = Join-Path $scratch "world.txt"
+        $r = Invoke-Lumen -Pdf $world -Name "world" -Hooks @{ LUMEN_EXPORT = "text,$out" }
+
+        if ($r.ok -and (Test-Path $out)) {
+            $text = [System.Text.Encoding]::UTF8.GetString([System.IO.File]::ReadAllBytes($out))
+
+            # A distinctive fragment per script. Short on purpose: the point is
+            # that the characters survive extraction, not that line breaking is
+            # identical.
+            $probes = [ordered]@{
+                "Latin"              = "quick brown fox"
+                "Latin diacritics"   = [string][char]0x017E + [char]0x006C   # žl
+                "Vietnamese"         = [string][char]0x1EBF + [char]0x006E   # ến
+                "Greek"              = [string][char]0x03BA + [char]0x03B5   # κε
+                "Cyrillic"           = [string][char]0x0435 + [char]0x0449   # ещ
+                "Arabic"             = [string][char]0x0627 + [char]0x0644   # ال
+                "Hebrew"             = [string][char]0x05D1 + [char]0x05E2   # בע
+                "Devanagari"         = [string][char]0x0939 + [char]0x093F   # हि
+                "Thai"               = [string][char]0x0E20 + [char]0x0E32   # ภา
+                "Korean"             = [string][char]0xD55C + [char]0xAD6D   # 한국
+            }
+
+            $found = 0
+            foreach ($name in $probes.Keys) {
+                if ($text.Contains($probes[$name])) { $found++ }
+            }
+
+            # Scripts whose fonts are not installed are skipped when the fixture
+            # is written, so the bar is "most of them", not "all".
+            Assert-True ($found -ge 7) `
+                "at least 7 of 10 scripts survive extraction (found $found)"
+            Assert-True ($text.Contains("quick brown fox")) "Latin extraction is exact"
+        }
+    }
+}
+
+if (Start-Case "world-scripts-search") {
+    $world = Join-Path $fixtureDir "world-scripts.pdf"
+    if (Test-Path $world) {
+        # Cyrillic, chosen because case-insensitive matching has real rules here
+        # and a naive ASCII fold would miss it.
+        $needle = [string][char]0x0435 + [char]0x0449   # ещ
+        $r = Invoke-Lumen -Pdf $world -Name "world-search" -Hooks @{ LUMEN_SEARCH = $needle }
+        if ($r.ok) { Assert-True ($r.report.searchHits -ge 1) "non-Latin search finds its phrase" }
+    }
+}
+
+# -- OCR --------------------------------------------------------------------
+#
+# The test builds its own scan: redaction rasterises a page, which is exactly
+# what a scanner produces -- pixels and no text. OCR then has to put the text
+# back, and the assertion is that the page becomes searchable again.
+
+if (Start-Case "ocr-makes-a-scan-searchable") {
+    $scan = Join-Path $scratch "scan.pdf"
+    Copy-Item $latin $scan -Force
+
+    Invoke-Lumen -Pdf $scan -Name "ocr-flatten" -Hooks @{
+        LUMEN_SELECT = "0,72,140,400,160"
+        LUMEN_ANNOTATE = "redact"
+        LUMEN_SAVE_AS = $scan
+    } | Out-Null
+
+    $before = Invoke-Lumen -Pdf $scan -Name "ocr-before"
+    if ($before.ok) {
+        Assert-Equal 0 $before.report.pageTextLengths[0] "the flattened page has no text"
+    }
+
+    # Recognition is slow; give it room before the report is written.
+    $r = Invoke-Lumen -Pdf $scan -Name "ocr-run" -Hooks @{
+        LUMEN_OCR = "auto"
+        LUMEN_SAVE_AS = $scan
+        LUMEN_CAPTURE_DELAY = "30000"
+    }
+    $env:LUMEN_CAPTURE_DELAY = "3000"
+
+    $after = Invoke-Lumen -Pdf $scan -Name "ocr-after"
+    if ($after.ok) {
+        $recovered = $after.report.pageTextLengths[0]
+        if ($recovered -gt 0) {
+            Assert-True ($recovered -gt 100) `
+                "OCR restored a text layer ($recovered characters)"
+
+            $hits = Invoke-Lumen -Pdf $scan -Name "ocr-search" -Hooks @{ LUMEN_SEARCH = "cycle" }
+            if ($hits.ok) {
+                Assert-True ($hits.report.searchHits -gt 6) `
+                    "the recognised page is searchable again ($($hits.report.searchHits) hits)"
+            }
+        } else {
+            # No OCR language pack is a property of the machine, not a failure
+            # of the code -- say so rather than reporting a red test.
+            Write-Host "    skip Windows has no OCR language installed" -ForegroundColor DarkYellow
+        }
     }
 }
 

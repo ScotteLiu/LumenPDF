@@ -508,11 +508,47 @@ ApplicationWindow {
                 action: () => redactConfirm.open()
             },
             {
+                label: qsTr("Recognise Text (OCR)…"),
+                icon: Icons.text,
+                enabled: Document.ocr.available,
+                action: () => ocrPanel.open()
+            },
+            {
                 label: qsTr("Add Signature…"),
                 icon: Icons.signature,
                 action: () => {
                     signaturePad.targetPage = pageView.currentPage;
                     signaturePad.open();
+                }
+            },
+            { separator: true },
+            {
+                label: Document.google.signedIn
+                       ? qsTr("Sign out of Google Drive")
+                       : qsTr("Sign in to Google Drive…"),
+                icon: Icons.cloud,
+                enabled: Document.drive.available && !Document.google.busy,
+                action: () => {
+                    if (Document.google.signedIn)
+                        Document.google.signOut();
+                    else
+                        Document.google.signIn();
+                }
+            },
+            {
+                label: Document.drive.linkedFileId.length > 0
+                       ? qsTr("Save to Drive (%1)").arg(Document.drive.linkedFileName)
+                       : qsTr("Upload a Copy to Drive"),
+                icon: Icons.cloudUp,
+                enabled: Document.drive.available
+                         && Document.google.signedIn
+                         && !Document.drive.busy
+                         && Document.status === DocumentStatus.Ready,
+                action: () => {
+                    if (Document.drive.linkedFileId.length > 0)
+                        Document.drive.saveToLinkedFile(Document.filePath);
+                    else
+                        Document.drive.uploadAsNew(Document.filePath, Document.title);
                 }
             },
             { separator: true },
@@ -581,6 +617,33 @@ ApplicationWindow {
         onConfirmed: Document.redact.redactSelection()
     }
 
+    OcrPanel { id: ocrPanel }
+
+    Connections {
+        target: Document.google
+        function onFailed(reason) { toast.show(reason, true) }
+        function onSignedInChanged() {
+            if (Document.google.signedIn)
+                toast.show(qsTr("Signed in as %1").arg(Document.google.account));
+        }
+    }
+
+    Connections {
+        target: Document.drive
+        function onFailed(reason) { toast.show(reason, true) }
+        function onUploaded(fileId, fileName) {
+            toast.show(qsTr("Saved %1 to Drive").arg(fileName));
+        }
+    }
+
+    Connections {
+        target: Document.ocr
+        function onFailed(reason) { toast.show(reason, true) }
+        function onFinished(pagesRecognised, wordsAdded) {
+            toast.show(qsTr("Recognised %n page(s)", "", pagesRecognised));
+        }
+    }
+
     SignaturePad {
         id: signaturePad
         onAccepted: toast.show(qsTr("Signature placed"))
@@ -603,6 +666,17 @@ ApplicationWindow {
         active: Platform.benchmark.length > 0
         sourceComponent: BenchmarkRunner { view: pageView }
     }
+
+    // Only exists when LUMEN_RECORD is set.
+    Loader {
+        active: Platform.recordDir.length > 0
+        sourceComponent: DemoRunner { view: pageView; app: window }
+    }
+
+    // The demo needs to drive the sidebar, which is otherwise private to this
+    // component. Named differently from the id it exposes: an alias whose name
+    // matches its target resolves to itself and silently becomes undefined.
+    property alias sidebarPanel: sidebar
 
     // Time-to-first-page: the moment a rendered page raster is actually on
     // screen, which is the number a user experiences as "how fast it opens".

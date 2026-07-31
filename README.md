@@ -20,12 +20,28 @@ in 130 ms), match highlighting with a strong marker on the current hit.
 **Selecting** — click-drag and double-click selection that follows the real
 text flow, including across columns and across pages. Copy to clipboard.
 
-**CJK correctness** — Chinese, Japanese and Korean text is a first-class case,
-not an afterthought. Extraction normalises the Kangxi-radical duplicates that
-CJK fonts map glyphs through, so copied text is the characters you actually see
-rather than lookalikes that match nothing when pasted. Searching works for a
-single ideograph, and double-clicking selects one character instead of the whole
-line. All four of those were real bugs, and each now has a regression test.
+**Every script, not just Latin** — text extraction is where PDF tools quietly go
+wrong, and each writing system fails differently: right-to-left order in Arabic
+and Hebrew, stacked tone marks in Vietnamese, clusters in Devanagari and Thai,
+scripts written without spaces. Ten writing systems are regression-tested on
+every change.
+
+Chinese alone had four real bugs, all now fixed and held by tests: extraction
+returned Kangxi-radical lookalikes so copied text matched nothing when pasted;
+searching for a single ideograph was blocked by a minimum query length; a
+one-character selection read as empty; and Latin word rules swallowed whole
+runs of Han on a double-click.
+
+**OCR** — scanned pages get an invisible text layer written underneath the
+image, so the scan looks identical and becomes searchable, selectable and
+copyable. Backed by Windows' own recogniser: offline, no extra download, and it
+uses whichever languages your system already has.
+
+**Google Drive** — open from Drive, edit, and save back to the same file,
+keeping its ID and sharing. Scoped to `drive.file`, so it can only touch files
+you explicitly open or that LumenPDF created. Requires your own OAuth client —
+see [docs/GOOGLE-DRIVE-SETUP.md](docs/GOOGLE-DRIVE-SETUP.md) for why that cannot
+be shipped for you, and how to get one in a few minutes.
 
 **Editing** — highlight, underline and strike-through in four colours, applied
 from a floating bar that appears over the selection. Rotate, reorder and delete

@@ -22,8 +22,25 @@ bool writeLatinSample(const QString &filePath);
 
 // Traditional and Simplified Chinese, plus Japanese, with known phrases.
 // Returns false when no CJK-capable font is installed, since a fixture full of
-// tofu would make the CJK tests meaningless rather than failing.
+// tofu would make the tests meaningless rather than failing.
 bool writeCjkSample(const QString &filePath);
+
+// One page per writing system, covering the ways text extraction can go wrong:
+// right-to-left order, combining marks, Indic clusters, and scripts with no
+// spaces. Each page carries a phrase the tests assert on.
+//
+// Returns the number of scripts actually written -- a script whose font is not
+// installed is skipped rather than rendered as boxes, because a fixture full of
+// tofu tests nothing.
+int writeWorldScriptsSample(const QString &filePath);
+
+// A dense, designed document used for the product-page recording.
+//
+// Separate from the test fixtures on purpose: those are deliberately sparse and
+// their contents are pinned by assertions, which makes them look empty on
+// screen. This one exists to be looked at, and its text is written by us so the
+// public demo does not republish somebody else's paper.
+bool writeDemoDocument(const QString &filePath);
 
 // A deliberately long document, for measuring what happens at scale: page
 // layout, scroll performance, and memory when a viewer cannot possibly hold

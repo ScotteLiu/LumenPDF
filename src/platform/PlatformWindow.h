@@ -28,6 +28,11 @@ class PlatformWindow : public QObject {
     // Empty for a normal launch.
     Q_PROPERTY(QString benchmark READ benchmark CONSTANT)
 
+    // Directory to record frames into, from LUMEN_RECORD. Empty for a normal
+    // launch. Recording exists so the demo on the product page is the real
+    // application rather than a mock-up.
+    Q_PROPERTY(QString recordDir READ recordDir CONSTANT)
+
 public:
     explicit PlatformWindow(QObject *parent = nullptr);
 
@@ -47,6 +52,11 @@ public:
     int initialSidebarTab() const;
     int initialDark() const;
     QString benchmark() const;
+    QString recordDir() const;
+
+    // Writes one frame of the recording. `window` is the QQuickWindow to grab
+    // and `index` orders the files for the encoder.
+    Q_INVOKABLE bool captureFrame(QWindow *window, int index);
 
     // Records a milestone on the startup timeline from QML. The moment the
     // first page raster is actually on screen can only be known up there.

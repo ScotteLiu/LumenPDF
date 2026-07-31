@@ -2,9 +2,11 @@
 
 #include "app/Timing.h"
 
+#include <QDir>
 #include <QFontDatabase>
 #include <QGuiApplication>
 #include <QLoggingCategory>
+#include <QQuickWindow>
 #include <QWindow>
 
 #ifdef Q_OS_WIN
@@ -80,6 +82,35 @@ QString PlatformWindow::uiFontFamily() const
 QString PlatformWindow::benchmark() const
 {
     return qEnvironmentVariable("LUMEN_BENCH");
+}
+
+QString PlatformWindow::recordDir() const
+{
+    return qEnvironmentVariable("LUMEN_RECORD");
+}
+
+bool PlatformWindow::captureFrame(QWindow *window, int index)
+{
+    const QString dir = recordDir();
+    if (dir.isEmpty() || !window)
+        return false;
+
+    auto *quickWindow = qobject_cast<QQuickWindow *>(window);
+    if (!quickWindow)
+        return false;
+
+    // grabWindow() is synchronous and returns what was actually rendered, so
+    // frames cannot drift out of step with the animation driving them.
+    const QImage frame = quickWindow->grabWindow();
+    if (frame.isNull())
+        return false;
+
+    QDir().mkpath(dir);
+    // Zero-padded so the encoder's glob picks them up in order.
+    const QString path = QDir(dir).filePath(
+        QStringLiteral("frame-%1.png").arg(index, 5, 10, QLatin1Char('0')));
+
+    return frame.save(path, "PNG");
 }
 
 void PlatformWindow::markTiming(const QString &milestone)

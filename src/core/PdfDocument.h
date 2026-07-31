@@ -194,6 +194,26 @@ public:
     // spacing inside the original run is lost -- callers must say so.
     bool setTextObjectString(int pageIndex, int objectIndex, const QString &text);
 
+    // -- OCR text layer ----------------------------------------------------
+
+    struct RecognisedWord {
+        QString text;
+        QRectF box;   // PDF points, top-left origin
+    };
+
+    // Writes words as invisible text positioned over the page.
+    //
+    // This is how a scanned page becomes searchable: the pixels are untouched
+    // and unchanged, and a text layer is laid underneath them in render mode 3
+    // so it is selectable and searchable but never drawn. Each word is scaled
+    // to fill its own box, so selection highlights land on the right pixels
+    // rather than drifting across the line.
+    bool addInvisibleTextLayer(int pageIndex, const QVector<RecognisedWord> &words);
+
+    // True when the page already carries extractable text, which is the signal
+    // that OCR would be duplicating what is already there.
+    bool pageHasText(int pageIndex) const;
+
     // -- Redaction ---------------------------------------------------------
 
     // Permanently destroys page content inside `regions`, in PDF points with a

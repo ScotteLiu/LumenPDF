@@ -7,6 +7,9 @@
 #include "bridge/SearchController.h"
 #include "bridge/ExportController.h"
 #include "bridge/FormController.h"
+#include "bridge/OcrController.h"
+#include "cloud/GoogleAuth.h"
+#include "cloud/GoogleDrive.h"
 #include "bridge/PageOperations.h"
 #include "bridge/RedactionController.h"
 #include "bridge/SelectionController.h"
@@ -46,6 +49,9 @@ class DocumentController : public QObject {
     Q_PROPERTY(lumen::ExportController *exporter READ exporter CONSTANT)
     Q_PROPERTY(lumen::RedactionController *redact READ redact CONSTANT)
     Q_PROPERTY(lumen::FormController *forms READ forms CONSTANT)
+    Q_PROPERTY(lumen::OcrController *ocr READ ocr CONSTANT)
+    Q_PROPERTY(lumen::GoogleAuth *google READ google CONSTANT)
+    Q_PROPERTY(lumen::GoogleDrive *drive READ drive CONSTANT)
 
     Q_PROPERTY(bool modified READ isModified NOTIFY modifiedChanged)
 
@@ -87,6 +93,9 @@ public:
     ExportController *exporter() const { return m_exporter; }
     RedactionController *redact() const { return m_redact; }
     FormController *forms() const { return m_forms; }
+    OcrController *ocr() const { return m_ocr; }
+    GoogleAuth *google() const { return m_google; }
+    GoogleDrive *drive() const { return m_drive; }
 
     bool isModified() const;
     int renderGeneration() const { return m_renderGeneration; }
@@ -151,6 +160,11 @@ private:
     ExportController *m_exporter = nullptr;
     RedactionController *m_redact = nullptr;
     FormController *m_forms = nullptr;
+    OcrController *m_ocr = nullptr;
+
+    QNetworkAccessManager *m_network = nullptr;
+    GoogleAuth *m_google = nullptr;
+    GoogleDrive *m_drive = nullptr;
 
     int m_renderGeneration = 0;
 };

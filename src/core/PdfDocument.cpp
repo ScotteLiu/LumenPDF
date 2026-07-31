@@ -2243,6 +2243,110 @@ bool PdfDocument::addInkStrokes(int pageIndex,
 }
 
 // ---------------------------------------------------------------------------
+// OCR text layer
+// ---------------------------------------------------------------------------
+
+bool PdfDocument::pageHasText(int pageIndex) const
+{
+    // A handful of stray characters is not a text layer -- scanned pages often
+    // carry a page number or a stamp that was never part of the scan.
+    return pageText(pageIndex).simplified().size() > 24;
+}
+
+bool PdfDocument::addInvisibleTextLayer(int pageIndex,
+                                        const QVector<RecognisedWord> &words)
+{
+    if (!m_valid || words.isEmpty() || pageIndex < 0 || pageIndex >= m_pages.size())
+        return false;
+
+#ifdef LUMEN_HAS_PDFIUM
+    QMutexLocker locker(&m_mutex);
+    if (!m_handle)
+        return false;
+
+    invalidatePage(pageIndex);
+
+    auto doc = static_cast<FPDF_DOCUMENT>(m_handle);
+    FPDF_PAGE page = FPDF_LoadPage(doc, pageIndex);
+    if (!page)
+        return false;
+
+    // Helvetica: one of the fourteen standard fonts, so nothing is embedded and
+    // the layer costs almost nothing. It is never drawn, so its shapes do not
+    // matter -- only its advances, which is what positions the selection.
+    FPDF_FONT font = FPDFText_LoadStandardFont(doc, "Helvetica");
+    if (!font) {
+        FPDF_ClosePage(page);
+        return false;
+    }
+
+    const double pageHeight = m_pages.at(pageIndex).sizePoints.height();
+    int placed = 0;
+
+    for (const RecognisedWord &word : words) {
+        const QString text = word.text.trimmed();
+        if (text.isEmpty() || word.box.width() <= 0 || word.box.height() <= 0)
+            continue;
+
+        // Font size from the box height. The exact value hardly matters because
+        // the matrix below rescales it; starting close keeps that scale sane.
+        const double fontSize = qMax(1.0, word.box.height() * 0.8);
+
+        FPDF_PAGEOBJECT object = FPDFPageObj_CreateTextObj(doc, font, float(fontSize));
+        if (!object)
+            continue;
+
+        if (!FPDFText_SetText(object, reinterpret_cast<FPDF_WIDESTRING>(text.utf16()))) {
+            FPDFPageObj_Destroy(object);
+            continue;
+        }
+
+        // Render mode 3 is "invisible": laid out and selectable, never painted.
+        // Without it the OCR guesses would be printed on top of the scan.
+        FPDFTextObj_SetTextRenderMode(object, FPDF_TEXTRENDERMODE_INVISIBLE);
+
+        // Measure what the text actually occupies, then scale it to the box the
+        // recogniser reported. Guessing the width from character counts drifts
+        // badly on anything but even-width text.
+        float left = 0, bottom = 0, right = 0, top = 0;
+        if (!FPDFPageObj_GetBounds(object, &left, &bottom, &right, &top)) {
+            FPDFPageObj_Destroy(object);
+            continue;
+        }
+
+        const double naturalWidth = right - left;
+        const double scaleX = naturalWidth > 0.01 ? word.box.width() / naturalWidth : 1.0;
+
+        // Into PDF user space, with the baseline set from the box's bottom.
+        const double targetX = word.box.left();
+        const double targetY = pageHeight - word.box.bottom() + word.box.height() * 0.18;
+
+        FS_MATRIX matrix { float(scaleX), 0.0f, 0.0f, 1.0f,
+                           float(targetX), float(targetY) };
+        FPDFPageObj_SetMatrix(object, &matrix);
+
+        FPDFPage_InsertObject(page, object);
+        ++placed;
+    }
+
+    if (placed == 0) {
+        FPDF_ClosePage(page);
+        return false;
+    }
+
+    FPDFPage_GenerateContent(page);
+    FPDF_ClosePage(page);
+
+    m_modified = true;
+    qCInfo(lcDoc) << "wrote an invisible text layer of" << placed
+                  << "words on page" << pageIndex;
+    return true;
+#else
+    return false;
+#endif
+}
+
+// ---------------------------------------------------------------------------
 // Redaction
 // ---------------------------------------------------------------------------
 

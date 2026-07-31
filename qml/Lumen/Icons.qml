@@ -44,6 +44,9 @@ QtObject {
     readonly property string merge:       "M8 3H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3 M12 8h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-7a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2z"
     readonly property string extract:     "M6 20a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h7l5 5v3 M13 2v5h5 M14 17h7 M18 14l3 3-3 3"
 
+    readonly property string cloud:       "M7 19a4.5 4.5 0 0 1-.5-8.97 6 6 0 0 1 11.6 1.6A3.9 3.9 0 0 1 17.5 19z"
+    readonly property string cloudUp:     "M7 18a4.5 4.5 0 0 1-.5-8.97 6 6 0 0 1 11.6 1.6A3.9 3.9 0 0 1 17.5 18 M12 21v-8 M9 16l3-3 3 3"
+
     readonly property string editText:    "M4 7V5h12v2 M10 5v13 M8 18h4 M15.5 15.5l5-5 2.5 2.5-5 5-3 .5z"
     readonly property string more:        "M6 12h.01 M12 12h.01 M18 12h.01"
     readonly property string image:       "M4 4h16a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z M3 16l4.5-4.5 3 3 3.5-3.5L21 15 M15.5 8.5h.01"

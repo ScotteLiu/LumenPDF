@@ -8,6 +8,7 @@
 
 #include <QFile>
 #include <QFileInfo>
+#include <QNetworkAccessManager>
 #include <QtConcurrent/QtConcurrentRun>
 #include <QFutureWatcher>
 
@@ -24,7 +25,24 @@ DocumentController::DocumentController(QObject *parent)
     , m_exporter(new ExportController(this))
     , m_redact(new RedactionController(m_selection, this))
     , m_forms(new FormController(this))
+    , m_ocr(new OcrController(this))
+    , m_network(new QNetworkAccessManager(this))
+    , m_google(new GoogleAuth(m_network, this))
+    , m_drive(new GoogleDrive(m_google, m_network, this))
 {
+    // A document downloaded from Drive is opened from the local cache: editing
+    // over the network would turn every save into a network failure waiting to
+    // happen. The local copy is authoritative until the user uploads.
+    connect(m_drive, &GoogleDrive::downloaded, this,
+            [this](const QString &localPath, const QString &) {
+                open(QUrl::fromLocalFile(localPath));
+            });
+
+    // An OCR text layer changes what the page renders to, exactly like an
+    // annotation, so it reuses the same invalidation path.
+    connect(m_ocr, &OcrController::pageInvalidated,
+            m_annotate, &AnnotationController::pageInvalidated);
+
     // Redaction and form editing both change rendered content exactly like an
     // annotation does, so they reuse the same invalidation path.
     connect(m_redact, &RedactionController::pageInvalidated,
@@ -184,6 +202,7 @@ void DocumentController::adoptDocument(const QSharedPointer<PdfDocument> &docume
     m_exporter->setDocument(m_document);
     m_redact->setDocument(m_document);
     m_forms->setDocument(m_document);
+    m_ocr->setDocument(m_document);
 
     if (m_document && m_document->isValid()) {
         m_filePath = m_document->filePath();

@@ -156,7 +156,7 @@ header { padding: var(--space-9) 0 var(--space-8); text-align: center; }
   border: 1px solid var(--line);
   box-shadow: 0 30px 80px -20px rgba(0,0,0,.55), 0 6px 20px rgba(0,0,0,.25);
 }
-.shot img { display: block; width: 100%; height: auto; }
+.shot img, .shot video { display: block; width: 100%; height: auto; }
 
 /* -- Numbers ------------------------------------------------------------- */
 .numbers {
@@ -309,10 +309,25 @@ footer .spacer { margin-left: auto; }
       <span class="en">Windows 10/11 64-bit · 41 MB installer</span>
     </p>
 
+    <!-- The demo is the real application recorded frame by frame, not a
+         mock-up. Muted and inline so it plays without asking, with a poster
+         for the browsers that refuse to autoplay. -->
     <div class="shot">
-      <img src="img/reading.jpg" width="1600" height="1050"
-           alt="LumenPDF 開啟一份論文，側欄顯示頁面縮圖，內文有一段黃色螢光標記">
+      <video autoplay muted loop playsinline preload="metadata"
+             poster="video/poster.jpg" width="1280" height="840"
+             aria-label="LumenPDF 操作示範：捲動、縮放、搜尋、選取文字並加上螢光標記">
+        <source src="video/demo.webm" type="video/webm">
+        <source src="video/demo.mp4" type="video/mp4">
+        <img src="img/reading.jpg" width="1600" height="1050"
+             alt="LumenPDF 開啟一份文件，側欄顯示頁面縮圖">
+      </video>
     </div>
+    <p class="cta-note">
+      <span class="zh">這段影片是應用程式自己逐幀錄下的，不是模擬畫面。腳本在
+        <code>qml/App/DemoRunner.qml</code>。</span>
+      <span class="en">Recorded frame by frame by the application itself, not a
+        mock-up. The script is <code>qml/App/DemoRunner.qml</code>.</span>
+    </p>
   </div>
 </header>
 
@@ -398,6 +413,20 @@ footer .spacer { margin-left: auto; }
         <p><span class="zh">頁面轉圖片、純文字匯出，以及只降取樣「畫得太小卻放太大張」的圖片。</span>
            <span class="en">Pages to images, plain text, and a reduced copy that downsamples only images oversized relative to how large they are drawn.</span></p>
       </div>
+
+      <div class="card">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M6 3h9l4 4v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M8.5 12h7M8.5 16h4"/></svg>
+        <h3><span class="zh">OCR：掃描檔變成可搜尋</span><span class="en">OCR for scanned files</span></h3>
+        <p><span class="zh">在圖片底下寫入一層看不見的文字。畫面完全不變，但可以搜尋、選取、複製。語言用 Windows 內建的辨識器，離線、免額外下載。</span>
+           <span class="en">Writes an invisible text layer under the image. The scan looks identical but becomes searchable, selectable and copyable. Uses Windows' own recogniser — offline, nothing extra to download.</span></p>
+      </div>
+
+      <div class="card">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><path d="M7 19a4.5 4.5 0 0 1-.5-8.97 6 6 0 0 1 11.6 1.6A3.9 3.9 0 0 1 17.5 19z"/></svg>
+        <h3><span class="zh">Google Drive</span><span class="en">Google Drive</span></h3>
+        <p><span class="zh">從雲端開啟、編輯完存回同一個檔案，ID 與分享設定都保留。權限僅限你親手開啟的檔案。需要自行註冊憑證，見下方說明。</span>
+           <span class="en">Open from Drive, edit, and save back to the same file — keeping its ID, sharing and history. Scoped to files you explicitly open. Needs your own credentials; see below.</span></p>
+      </div>
     </div>
   </div>
 </section>
@@ -428,14 +457,14 @@ footer .spacer { margin-left: auto; }
       <img src="img/search.jpg" width="1600" height="1050"
            alt="搜尋面板列出多筆命中，頁面上對應文字以藍色標示">
       <div>
-        <h2><span class="zh">中日韓文字是一等公民</span><span class="en">CJK is a first-class case</span></h2>
+        <h2><span class="zh">每一種文字都算數</span><span class="en">Every script counts</span></h2>
         <p>
-          <span class="zh">很多 PDF 工具在中文上會出現一種難以察覺的錯誤：複製出來的字看起來對，貼到別處卻搜不到——因為抽出的是「康熙部首」區塊的碼位，不是正規漢字。</span>
-          <span class="en">Many PDF tools have a failure mode in Chinese that is almost impossible to notice: copied text looks right but matches nothing when pasted, because what was extracted are Kangxi-radical lookalikes rather than the real ideographs.</span>
+          <span class="zh">文字擷取是 PDF 工具最容易默默出錯的地方，而且錯了很難察覺：複製出來的字看起來對，貼到別處卻搜不到。阿拉伯文與希伯來文的順序、越南文疊起來的聲調符號、天城文與泰文的組合字、沒有空白的漢字——每一種都有自己的失敗方式。</span>
+          <span class="en">Text extraction is where PDF tools quietly go wrong, and the failures are hard to notice: copied text looks right but matches nothing when pasted. Right-to-left order in Arabic and Hebrew, stacked tone marks in Vietnamese, clusters in Devanagari and Thai, scripts written without spaces — each fails in its own way.</span>
         </p>
         <div class="callout">
-          <span class="zh">LumenPDF 會把它們正規化回真正的漢字。搜尋單一個中文字有效，雙擊選字選的是一個字而不是一整行。<strong>這四件事以前全是壞的</strong>——現在每一項都有回歸測試守著。</span>
-          <span class="en">LumenPDF normalises them back. Searching for a single ideograph works, and double-clicking selects one character rather than the whole line. <strong>All four of those were real bugs</strong>, and each now has a regression test.</span>
+          <span class="zh">LumenPDF 對十種書寫系統做回歸測試，每次改動都跑。中文曾有四個真實 bug——包括抽出的是「康熙部首」而非正規漢字，讓複製的文字在別處永遠搜不到。<strong>四個都修好了，四個都有測試守著。</strong></span>
+          <span class="en">LumenPDF regression-tests ten writing systems on every change. Chinese alone had four real bugs — including extraction returning Kangxi-radical lookalikes, so copied text matched nothing anywhere else. <strong>All four are fixed, and all four are held by tests.</strong></span>
         </div>
       </div>
     </div>
@@ -462,15 +491,25 @@ footer .spacer { margin-left: auto; }
       </div>
 
       <div class="note">
+        <h3><span class="zh">Google Drive 需要你自己註冊一組憑證</span><span class="en">Google Drive needs your own credentials</span></h3>
+        <p><span class="zh">整合已經寫好了，但 Google 用 client ID 識別的是「應用程式」，取得它意味著同意 Google 的條款並具名一個法律主體——那必須由使用者或發行者自己完成，不能代勞。</span>
+           <span class="en">The integration is written, but Google identifies <em>applications</em> by client ID, and getting one means agreeing to Google's terms as a named legal entity. That is not something anyone can do on your behalf.</span></p>
+        <p><span class="zh">申請只需幾分鐘，步驟寫在 <a href="https://github.com/ScotteLiu/LumenPDF/blob/main/docs/GOOGLE-DRIVE-SETUP.md" style="color:var(--accent)">GOOGLE-DRIVE-SETUP.md</a>。權限只要 <code>drive.file</code>：只能碰你親手開啟或本程式建立的檔案，看不到你雲端硬碟的其他任何東西——這是 Google 強制的，不是我們口頭保證的。</span>
+           <span class="en">It takes a few minutes; the steps are in <a href="https://github.com/ScotteLiu/LumenPDF/blob/main/docs/GOOGLE-DRIVE-SETUP.md" style="color:var(--accent)">GOOGLE-DRIVE-SETUP.md</a>. The scope requested is <code>drive.file</code> only: files you explicitly open or that LumenPDF created, and nothing else in your Drive. That boundary is enforced by Google, not promised by us.</span></p>
+      </div>
+
+      <div class="note">
         <h3><span class="zh">目前只有 Windows</span><span class="en">Windows only, for now</span></h3>
         <p><span class="zh">macOS 和 Linux 在規劃中。所有平台相關的程式碼從第一天就隔離在一個檔案裡，圖形後端也只在一個地方選擇——但「能編譯」和「能用」是兩回事，所以還沒承諾時程。</span>
            <span class="en">macOS and Linux are planned. Every platform-specific call has been confined to one file since day one and the graphics backend is chosen in one place — but compiling and shipping are different things, so there is no date.</span></p>
       </div>
 
       <div class="note">
-        <h3><span class="zh">還沒有 OCR</span><span class="en">No OCR yet</span></h3>
-        <p><span class="zh">掃描檔可以開、可以標註、可以整理頁面，但沒有文字層就搜不到內容。OCR 排在下一階段。</span>
-           <span class="en">Scanned documents open, annotate and reorganise fine, but without a text layer there is nothing to search. OCR is next.</span></p>
+        <h3><span class="zh">OCR 用的是 Windows 的辨識器</span><span class="en">OCR uses Windows' recogniser</span></h3>
+        <p><span class="zh">好處是離線、不用多下載一百多 MB 的語言資料、而且用的是你系統上已經裝好的語言。代價是可用語言由 Windows 決定，而且這是目前唯一沒有跨平台方案的部分。</span>
+           <span class="en">That keeps it offline, avoids shipping a hundred megabytes of language data, and uses whichever languages your system already has. The cost is that the available languages are Windows' to decide, and this is the one part with no cross-platform story yet.</span></p>
+        <p><span class="zh">程式會列出你機器上實際可用的語言，而不是假裝每一種都支援。</span>
+           <span class="en">The app lists the languages your machine actually has, rather than pretending every language works.</span></p>
       </div>
     </div>
   </div>

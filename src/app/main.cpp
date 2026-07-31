@@ -6,6 +6,7 @@
 #include "bridge/OutlineModel.h"
 #include "bridge/ExportController.h"
 #include "bridge/FormController.h"
+#include "bridge/OcrController.h"
 #include "bridge/PageOperations.h"
 #include "bridge/RedactionController.h"
 #include "bridge/SearchController.h"
@@ -396,6 +397,34 @@ int main(int argc, char *argv[])
                              },
                              Qt::SingleShotConnection);
         }
+    }
+
+    // Test hook: run OCR over the document, then optionally save.
+    if (qEnvironmentVariableIsSet("LUMEN_OCR")) {
+        const QString language = qEnvironmentVariable("LUMEN_OCR");
+        QObject::connect(controller, &lumen::DocumentController::documentChanged,
+                         controller, [controller, language] {
+                             if (controller->pageCount() <= 0)
+                                 return;
+
+                             auto *ocr = controller->ocr();
+                             if (language != QLatin1String("auto"))
+                                 ocr->setLanguage(language);
+
+                             // Saving has to wait for recognition, which runs
+                             // on the worker pool.
+                             QObject::connect(ocr, &lumen::OcrController::finished,
+                                              controller, [controller](int, int) {
+                                                  if (qEnvironmentVariableIsSet("LUMEN_SAVE_AS")) {
+                                                      controller->saveAs(QUrl::fromLocalFile(
+                                                          qEnvironmentVariable("LUMEN_SAVE_AS")));
+                                                  }
+                                              },
+                                              Qt::SingleShotConnection);
+
+                             ocr->recogniseDocument();
+                         },
+                         Qt::SingleShotConnection);
     }
 
     installCaptureHook(engine, controller, platform);
