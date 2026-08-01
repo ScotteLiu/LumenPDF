@@ -1,0 +1,11 @@
+# Not active yet.
+#
+# Rename this to FUNDING.yml once GitHub Sponsors is enrolled at
+# https://github.com/sponsors — until then the file would put a "Sponsor"
+# button on the repository that leads to a page which does not exist, which is
+# worse than no button.
+#
+# Check enrolment with:
+#   gh api graphql -f query='{ user(login: "ScotteLiu") { hasSponsorsListing } }'
+
+github: ScotteLiu

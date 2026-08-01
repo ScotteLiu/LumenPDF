@@ -271,8 +271,8 @@ protecting revenue that was never going to arrive, while shutting the project
 out of Linux distributions, free code signing for open source, and anyone who
 might have wanted to help.
 
-If it is useful to you, [contributions and donations](#contributing) are the
-support model. Neither is required.
+There is no paid tier and nothing is held back. If it is useful to you, see
+[Contributing](#contributing) — help is worth more here than money is.
 
 **The name is not part of the licence.** Section 6 of Apache 2.0 grants no
 trademark rights: fork it, change it, sell it — but an unofficial build should
@@ -301,9 +301,13 @@ built in, so a half-finished one is never shown to anyone.
 `src/platform/`, and the graphics backend is chosen in one place in `main.cpp`.
 The port is real work, but it is not archaeology.
 
-Bug reports are welcome, especially with the PDF that caused them — this project
-has been wrong about text extraction in four different writing systems so far,
-and every one of those was found by someone looking at a real document.
+**Bug reports**, especially with the PDF that caused them. This project has been
+wrong about text extraction in four different writing systems so far, and every
+one of those was found by someone looking at a real document.
+
+Before opening a pull request, run `./scripts/run-tests.ps1`. It is 107
+assertions and takes a few minutes; CI runs the same suite on every push, so
+finding out locally is faster than finding out from a red tick.
 
 ## Platforms
 
