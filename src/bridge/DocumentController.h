@@ -19,8 +19,11 @@
 #include <QObject>
 #include <QPointF>
 #include <QSharedPointer>
+#include <QHash>
 #include <QUrl>
 #include <QVariantMap>
+
+#include "core/PdfTypes.h"   // LinkTarget, held by value in the link cache
 
 namespace lumen {
 
@@ -136,6 +139,15 @@ public:
     // parsing without simulating a click.
     Q_INVOKABLE int linkCount(int pageIndex) const;
 
+    // How many times a link query has had to reach PDFium, taking the document
+    // mutex on the GUI thread. The hover path must never make this rise: the
+    // render workers hold that mutex for a whole page raster, so a probe on a
+    // mouse move stalls the interface for the length of one render.
+    //
+    // Asserted by the test suite. Reset per document.
+    Q_INVOKABLE int pdfiumProbes() const;
+    Q_INVOKABLE void resetPdfiumProbes();
+
     // Hands a URI to the shell, but only http, https and mailto. Returns false
     // for anything else, which the UI reports rather than swallowing.
     Q_INVOKABLE bool openExternalLink(const QString &uri);
@@ -184,6 +196,13 @@ private:
     void setStatus(Status status, const QString &error = {});
     void adoptDocument(const QSharedPointer<PdfDocument> &document);
     void openWithPassword(const QUrl &url, const QString &password);
+
+    // Link geometry per page, filled on first use and dropped whenever page
+    // indices can have shifted. PDFium already hands back rectangles; nothing
+    // needs it again until the document changes.
+    const QVector<LinkTarget> &cachedLinks(int pageIndex) const;
+    mutable QHash<int, QVector<LinkTarget>> m_linkCache;
+    mutable int m_pdfiumProbes = 0;
 
     QUrl m_pendingUrl; // the locked document awaiting a password
 

@@ -70,7 +70,8 @@ $hookNames = @("LUMEN_SEARCH", "LUMEN_SELECT", "LUMEN_SELECT_WORD", "LUMEN_ANNOT
                "LUMEN_FORM_FILL", "LUMEN_THEME", "LUMEN_SIDEBAR_TAB", "LUMEN_CAPTURE",
                "LUMEN_EDIT_TEXT", "LUMEN_BENCH", "LUMEN_OCR",
                "LUMEN_PRINT", "LUMEN_PASSWORD", "LUMEN_LINK_PROBE", "LUMEN_NOTE_PAGE",
-               "LUMEN_VERSION_COMPARE", "LUMEN_UPDATE_ASSET", "LUMEN_UPDATE_VERIFY")
+               "LUMEN_VERSION_COMPARE", "LUMEN_UPDATE_ASSET", "LUMEN_UPDATE_VERIFY",
+               "LUMEN_HOVER")
 
 $env:QT_FORCE_STDERR_LOGGING = "1"
 $env:LUMEN_CAPTURE_DELAY = "3000"
@@ -622,6 +623,28 @@ if (Start-Case "link-misleading-label") {
             "reports the annotation's target, not the visible label"
     } else {
         Assert-True $false "link-misleading ran ($($r.reason))"
+    }
+}
+
+if (Start-Case "hover-never-touches-pdfium") {
+    # The hover handler runs on the GUI thread, and PdfDocument::linkAt takes
+    # the document mutex -- which the render workers hold for the whole of a
+    # page raster. A probe per mouse move meant the interface stalled for the
+    # length of one render, repeatedly, while sweeping over a link.
+    #
+    # Link rectangles do not change unless the page does, so they are cached.
+    # This asserts the move path never reaches the backend again.
+    $r = Invoke-Lumen -Pdf $links -Name "hover-probes" `
+                      -Hooks @{ LUMEN_HOVER = "0,120,149,50" }
+    if ($r.ok) {
+        Assert-Equal 50 $r.report.hoverRepeats "50 hover probes were driven"
+        Assert-Equal 0 $r.report.hoverProbes `
+            "no hover reached PDFium on the GUI thread"
+        # Without this second assertion an always-empty cache would pass the
+        # first one: it proves the cached geometry still resolves correctly.
+        Assert-Equal 3 $r.report.pageLinkCounts[0] "and the cache still has the links"
+    } else {
+        Assert-True $false "hover-probes ran ($($r.reason))"
     }
 }
 

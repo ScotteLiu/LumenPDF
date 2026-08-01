@@ -66,6 +66,9 @@ DocumentController::DocumentController(QObject *parent)
 
         m_selection->clear();
         m_search->clear();
+        // Link rects are cached per page index, and a structural edit is
+        // exactly what makes an index mean a different page.
+        m_linkCache.clear();
         m_pageModel->setDocument(m_document);
         m_outlineModel->setDocument(m_document);
 
@@ -215,6 +218,23 @@ void DocumentController::openWithPassword(const QUrl &url, const QString &passwo
     }));
 }
 
+const QVector<LinkTarget> &DocumentController::cachedLinks(int pageIndex) const
+{
+    static const QVector<LinkTarget> empty;
+    if (!m_document || pageIndex < 0)
+        return empty;
+
+    auto it = m_linkCache.constFind(pageIndex);
+    if (it != m_linkCache.constEnd())
+        return it.value();
+
+    // A cold miss is the only path that reaches PDFium, and it takes the
+    // document mutex -- which the render workers hold for the whole of a page
+    // raster. Counted so a test can assert the hover path never gets here.
+    ++m_pdfiumProbes;
+    return *m_linkCache.insert(pageIndex, m_document->links(pageIndex));
+}
+
 QVariantMap DocumentController::linkAt(int pageIndex, const QPointF &point) const
 {
     QVariantMap map;
@@ -222,7 +242,15 @@ QVariantMap DocumentController::linkAt(int pageIndex, const QPointF &point) cons
     if (!m_document)
         return map;
 
-    const LinkTarget target = m_document->linkAt(pageIndex, point);
+    // Answered from cached geometry. This is called on every hover move, and
+    // the rects PDFium returns do not change unless the page does.
+    LinkTarget target;
+    for (const LinkTarget &candidate : cachedLinks(pageIndex)) {
+        if (candidate.rect.contains(point)) {
+            target = candidate;
+            break;
+        }
+    }
     switch (target.kind) {
     case LinkTarget::Kind::Page:
         map[QStringLiteral("kind")] = QStringLiteral("page");
@@ -258,7 +286,17 @@ QPointF DocumentController::pointOfText(int pageIndex, const QString &needle) co
 
 int DocumentController::linkCount(int pageIndex) const
 {
-    return m_document ? m_document->links(pageIndex).size() : 0;
+    return cachedLinks(pageIndex).size();
+}
+
+int DocumentController::pdfiumProbes() const
+{
+    return m_pdfiumProbes;
+}
+
+void DocumentController::resetPdfiumProbes()
+{
+    m_pdfiumProbes = 0;
 }
 
 bool DocumentController::openExternalLink(const QString &uri)
@@ -289,6 +327,8 @@ void DocumentController::close()
 void DocumentController::adoptDocument(const QSharedPointer<PdfDocument> &document)
 {
     m_document = document;
+    m_linkCache.clear();
+    m_pdfiumProbes = 0;
 
     // Provider first: the model reset below makes QML request page images
     // immediately, and those requests must land on the new document.

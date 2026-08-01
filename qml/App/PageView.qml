@@ -368,7 +368,10 @@ Item {
                     id: textArea
                     anchors.fill: parent
                     acceptedButtons: Qt.LeftButton
-                    hoverEnabled: true
+
+                    // Only pages that have something to hover over deliver move
+                    // events at all. A plain text page produces none.
+                    hoverEnabled: pageHasLinks || Document.forms.hasForms
 
                     // An I-beam over text, a hand over a form field or a link:
                     // the cursor is how anyone discovers a PDF is fillable, or
@@ -381,9 +384,11 @@ Item {
                     property int hoveredField: FormFieldKind.None
                     property bool hoveredLink: false
 
-                    // Evaluated once per page rather than per mouse move.
-                    // Probing for a link means loading the page in PDFium, and
-                    // most pages have no links at all.
+                    // Evaluated once per page. The first call fills
+                    // DocumentController's link cache for this page; every
+                    // hover afterwards is answered from that cache, so the
+                    // move path never takes the document mutex -- which the
+                    // render workers hold for the length of a page raster.
                     readonly property bool pageHasLinks:
                         Document.linkCount(pageSlot.index) > 0
 

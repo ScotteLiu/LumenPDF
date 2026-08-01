@@ -76,6 +76,28 @@ bool write(const QString &filePath,
     root["pageWidthsPoints"] = pageWidths;
     root["pageLinkCounts"] = pageLinks;
 
+    root["pdfiumProbes"] = controller->pdfiumProbes();
+
+    // Simulates what the hover handler does, N times, and reports how many of
+    // those had to reach PDFium. "<page>,<x>,<y>,<repeats>".
+    if (qEnvironmentVariableIsSet("LUMEN_HOVER")) {
+        const QStringList parts = qEnvironmentVariable("LUMEN_HOVER").split(u',');
+        if (parts.size() == 4) {
+            const int page = parts.at(0).toInt();
+            const QPointF point(parts.at(1).toDouble(), parts.at(2).toDouble());
+            const int repeats = parts.at(3).toInt();
+
+            controller->resetPdfiumProbes();
+            for (int i = 0; i < repeats; ++i) {
+                // Nudged by a sub-point each time so this cannot be mistaken
+                // for a cache of one answer to one identical query.
+                controller->linkAt(page, point + QPointF(i % 3 * 0.25, 0));
+            }
+            root["hoverRepeats"] = repeats;
+            root["hoverProbes"] = controller->pdfiumProbes();
+        }
+    }
+
     // Probe a single link, so a test can assert on what a click would resolve
     // to without synthesising one. "<page>,<x>,<y>" in PDF points.
     if (qEnvironmentVariableIsSet("LUMEN_LINK_PROBE")) {
