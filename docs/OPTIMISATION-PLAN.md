@@ -138,85 +138,96 @@ The whole undo coverage is `Assert-Equal 3 $r.report.pageCount` over `rotate,1,1
 8. **Finish the rest of item 7** — the rotate-width and `delete;undo;redo;undo` assertions — once the plumbing from (2) is in. It is the only item with no production code change, so it is the safe one to slip if the week runs short.
 ---
 
-## Open: startup regression in db222a8
+## Startup regression in db222a8 — diagnosed
+
+Not from the audit. Found while measuring; **cause identified, fix not yet
+chosen.**
+
+### The measurement
+
+Six consecutive runs of each binary, same machine, interleaved, reading
+`first-page-visible` straight out of the state report:
+
+```
+  eb40424    298, 280, 292, 284, 286, 288      -> ~287 ms
+  HEAD       513, 520, 524, 513, 513, 509      -> ~515 ms
+```
+
+Tight distributions, no overlap. Memory moved with it: 135 MB -> 210 MB.
+
+Two measurement traps caught me first, both worth knowing:
+
+- **Do not benchmark while anything else runs.** The first measurement was taken
+  while a 13-agent workflow was compiling and produced a 1528 ms outlier for a
+  run that measured 538 ms minutes later.
+- **The first run after a build is cold and means nothing.** A single run of
+  either binary reports ~518 ms. `benchmark.ps1` takes a median of five for
+  exactly this reason; a one-shot comparison had me briefly convinced there was
+  no regression at all.
+
+### The cause
+
+**Installing our own `QTranslator`.** Commenting out one line —
+`installTranslations(app, settings->language())` — takes HEAD from ~515 ms to
+~305 ms. That is 210 of the 228 ms.
+
+The cost is in Qt's translation path during QML instantiation, not in loading
+the file:
+
+- `translations-loaded` is **0 ms** on the startup marks; the `.qm` load itself
+  is free.
+- Qt's own `qtbase_<locale>.qm` is **not** the cost — removing it changes
+  nothing, because it does not exist in this Qt install and never loads.
+- It is **not** the compressed resource. Loading the identical `.qm` from the
+  filesystem instead of `:/i18n` measures the same ~515 ms.
+- The `.qm` files are normal: 19–22 KB, 226 messages, nothing malformed.
+
+So it is the per-`qsTr` path through `QCoreApplication::translate` once any
+translator is installed, multiplied by every translatable binding in the tree
+built at startup. Roughly 0.9 ms per string, which is high enough that the
+mechanism is worth understanding before choosing a fix.
+
+### Also ruled out, each by building and measuring
+
+- `Qt6PrintSupport` pulling in `Qt6Widgets` — real, and both are delay-loaded
+  now and verified absent from the process at idle
+  (`startup-does-not-load-printing` asserts it). Worth ~20 ms, no memory.
+- `QSettings`, `UpdateChecker` — 0 ms combined, per the startup marks.
+- The new sheets being instantiated — removing all four recovers 23 ms of 367.
+  `PrintSheet` and `SettingsSheet` are Loader-gated regardless.
+- `Document.linkCount()` on the page delegate — 5 ms.
+- The `visibility` binding and `Prefs`-driven window size in `Main.qml` — 0 ms.
+
+### What to do about it
+
+Not decided, and it is a genuine trade-off rather than a bug to squash:
+
+1. **Reduce translatable bindings built at startup.** Gating the four sheets was
+   worth 23 ms, so this scales but slowly — most of the 226 strings are in the
+   toolbar, sidebar and page view, which cannot be deferred.
+2. **Understand the 0.9 ms.** That number is high enough to suggest something
+   specific is wrong rather than translation simply being expensive. This is the
+   next thing to look at, and it needs a QML profiler rather than more bisecting.
+3. **Accept it.** 515 ms is not slow in absolute terms, and shipping in four
+   languages is worth more than 210 ms to the people who need it.
+
+The memory half (+75 MB) is **not** explained by any of this. A 19 KB `.qm`
+does not account for it, and no experiment above moved it.
+
+
 
 Not from the audit. Found while measuring, and **not yet fixed** — I ruled out
 four hypotheses and ran out of road. Written down so the next attempt starts
 from evidence instead of repeating mine.
 
-### What is established
-
-Same machine, back-to-back, `scripts/benchmark.ps1` (5 runs, median), a git
-worktree at each commit:
-
-| | `eb40424` (before) | `db222a8` (after) |
-|---|---|---|
-| First page, 3 pages | **315 ms** | 542 ms |
-| First page, 1000 pages | **547 ms** | 784 ms |
-| Memory, 3 pages | **135 MB** | 204 MB |
-| Memory, 1000 pages | **148 MB** | 215 MB |
-
-`db222a8` is "Add printing, links, encrypted documents, settings, translations
-and CI". Its parent is clean, so the cause is inside that one commit. Whole
-process lifetime is *unchanged* (527 ms then, 528 ms now) — only time-to-first-
-page and resident memory moved.
-
-The startup marks in `main.cpp` localise it precisely. On current HEAD:
-
-```
-  font-resolved           16 ms   +16
-  engine-created          22 ms   +6
-  settings-read           22 ms   +0
-  translations-loaded     22 ms   +0
-  updates-created         22 ms   +0
-  before-qml-load         22 ms   +0
-  qml-loaded             389 ms   +367     <- all of it is here
-  first-page-visible     584 ms   +195
-```
-
-**The entire cost is inside `engine.loadFromModule("App", "Main")`.**
-
-### What has been ruled out
-
-Each of these was tested by building and measuring, not by reasoning:
-
-- **`Qt6PrintSupport` pulling in `Qt6Widgets`.** Real — linking PrintSupport
-  does map 6.6 MB of DLLs, which is why the print sheet was built in QML in the
-  first place, and linking it gave the dependency back anyway. Both are now
-  delay-loaded and verified absent from the process at idle
-  (`startup-does-not-load-printing` asserts it). It changed the number by
-  ~20 ms and nothing at all in memory. **Not the cause.**
-- **`QSettings`, the translators, and `UpdateChecker`.** 0 ms combined, per the
-  marks above. **Not the cause.**
-- **The new sheets being instantiated at startup.** Removing `PrintSheet`,
-  `PasswordSheet`, `SettingsSheet` and `UpdateBanner` from `Main.qml` entirely
-  recovers 23 ms of the 367. `PrintSheet` and `SettingsSheet` are Loader-gated
-  now regardless, which is right on its own merits. **Not the cause.**
-- **`Document.linkCount()` on the page delegate.** Replacing it with a constant
-  changed 526 ms to 521 ms. **Not the cause.**
-
-### Where to look next
-
-Untested, in the order I would try them:
-
-1. **`width: Prefs.windowSize.width` / `visibility: Prefs.windowMaximized ? …`
-   in `Main.qml`.** The window used to be a fixed 1280×840; it is now sized from
-   a property read at creation, and `visibility` is bound too. If that triggers
-   a window-state change or a resize after the surface exists, the swapchain is
-   recreated — which would explain the memory as well as the time, and nothing
-   else on this list explains the memory at all.
-2. `PageView.qml`'s changes in the same commit, beyond `linkCount`.
-3. Whether `qt_add_translations`' resource affects QML module load.
-
-### How to measure it
-
-Do not benchmark while anything else is running on the machine. The first
-measurement in this investigation was taken while a 13-agent workflow was
-compiling, and it produced a 1528 ms outlier for a run that measured 538 ms
-minutes later — which sent me after the wrong cause twice.
+### Appendix: reproducing the bisect
 
 ```powershell
 git worktree add ..\lumen-before <commit>
-Copy-Item third_party\pdfium ..\lumen-before\third_party\pdfium -Recurse
+Copy-Item third_party\pdfium ..\lumen-before	hird_party\pdfium -Recurse
 cd ..\lumen-before ; ./scripts/build.ps1 ; ./scripts/benchmark.ps1
 ```
+
+Or, for a single figure without the benchmark harness, run the binary five or
+six times with `LUMEN_REPORT` set and read `timingsMs.first-page-visible` --
+discarding the first run.

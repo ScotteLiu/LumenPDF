@@ -1,0 +1,29 @@
+﻿{
+    "_comment":  [
+                     "Recorded by scripts/benchmark.ps1 -Record on the development machine.",
+                     "Machine-specific: these numbers mean nothing on different hardware, which is",
+                     "why the gate is opt-in (-Gate) and never runs in CI.",
+                     "",
+                     "tolerancePercent is set from observed run-to-run variance, not taste. The",
+                     "3-page case is stable to about 3%; the 1000-page case swings 20% between",
+                     "runs because it opens a 1.1 MB file. 25% still catches the class of",
+                     "regression this exists for -- the translator change cost 80% of first-page",
+                     "time -- while a tighter number would fire on noise, and a gate that cries",
+                     "wolf gets ignored, which is worse than no gate.",
+                     "",
+                     "firstPageMs carries a 210 ms cost from installing the QTranslator. That is",
+                     "diagnosed but not fixed (docs/OPTIMISATION-PLAN.md). Do not re-record it away."
+                 ],
+    "machine":  "STF-Scotte, 143 Hz display",
+    "recorded":  "2026-08-02",
+    "commit":  "ff1e5f5",
+    "latin":  {
+                  "firstPageMs":  507,
+                  "memoryMb":  206
+              },
+    "large":  {
+                  "firstPageMs":  939,
+                  "memoryMb":  208
+              },
+    "tolerancePercent":  25
+}

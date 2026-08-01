@@ -31,7 +31,16 @@
 [CmdletBinding()]
 param(
     [int]$Runs = 5,
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+
+    # Compare against docs/perf-baseline.json and exit non-zero if anything has
+    # regressed past its tolerance. Opt-in, and never run in CI: the baseline is
+    # specific to one machine and means nothing on a shared runner.
+    [switch]$Gate,
+
+    # Overwrite the baseline with what this run measured. Only after a change
+    # that is meant to move it, and say why in the commit message.
+    [switch]$Record
 )
 
 $ErrorActionPreference = "Stop"
@@ -107,10 +116,13 @@ Write-Host ""
 Write-Host "LumenPDF benchmark  ($Runs runs, median reported)" -ForegroundColor White
 Write-Host ""
 
+# Collected for -Gate / -Record. Keyed by the short scenario name.
+$script:results = @{}
+
 # -- Cold start -------------------------------------------------------------
 foreach ($case in @(
-    @{ Name = "latin (3 pages)"; Pdf = $latin },
-    @{ Name = "large (1000 pages)"; Pdf = $large }
+    @{ Name = "latin (3 pages)"; Key = "latin"; Pdf = $latin },
+    @{ Name = "large (1000 pages)"; Key = "large"; Pdf = $large }
 )) {
     if (-not (Test-Path $case.Pdf)) { continue }
 
@@ -132,6 +144,11 @@ foreach ($case in @(
     Write-Host ("    total process time    {0,7} ms   (includes process + DLL load)" -f (Get-Median $wall))
     Write-Host ("    memory                {0,7} MB" -f (Get-Median $memory))
     Write-Host ""
+
+    $script:results[$case.Key] = @{
+        firstPage = (Get-Median $firstPage)
+        memory    = (Get-Median $memory)
+    }
 }
 
 # -- Scroll -----------------------------------------------------------------
@@ -228,3 +245,59 @@ foreach ($n in @("LUMEN_REPORT","LUMEN_BENCH","LUMEN_CAPTURE_DELAY")) {
     Remove-Item "Env:$n" -ErrorAction SilentlyContinue
 }
 Write-Host ""
+
+# -- Baseline gate ----------------------------------------------------------
+#
+# A performance number nobody checks drifts. This project already lost 210 ms of
+# time-to-first-page to a change whose cost was invisible for two days, and the
+# only reason it surfaced was somebody happening to re-run the benchmark.
+#
+# The baseline is machine-specific, so this is opt-in rather than part of the
+# test suite: on a GitHub runner these numbers would be noise.
+$baselinePath = Join-Path $repoRoot "docs\perf-baseline.json"
+
+if ($Record) {
+    if (-not (Test-Path $baselinePath)) { throw "No baseline file at $baselinePath" }
+    $b = Get-Content $baselinePath -Raw | ConvertFrom-Json
+    foreach ($k in @("latin","large")) {
+        if ($script:results.ContainsKey($k)) {
+            $b.$k.firstPageMs = [int]$script:results[$k].firstPage
+            $b.$k.memoryMb    = [int]$script:results[$k].memory
+        }
+    }
+    $b.recorded = (Get-Date -Format "yyyy-MM-dd")
+    $b.commit = (& git -C $repoRoot rev-parse --short HEAD)
+    $b | ConvertTo-Json -Depth 5 | Set-Content $baselinePath -Encoding utf8
+    Write-Host "Baseline re-recorded. Say in the commit message why it moved." -ForegroundColor Yellow
+}
+
+if ($Gate) {
+    if (-not (Test-Path $baselinePath)) { throw "No baseline file at $baselinePath" }
+    $b = Get-Content $baselinePath -Raw | ConvertFrom-Json
+    $tol = [double]$b.tolerancePercent
+    $bad = 0
+
+    Write-Host "--- gate (tolerance ${tol}%) ---" -ForegroundColor Cyan
+    foreach ($k in @("latin","large")) {
+        if (-not $script:results.ContainsKey($k)) { continue }
+        foreach ($m in @(@{n="firstPageMs"; v=$script:results[$k].firstPage},
+                         @{n="memoryMb";    v=$script:results[$k].memory})) {
+            $want = [double]$b.$k.($m.n)
+            $got  = [double]$m.v
+            $delta = if ($want -gt 0) { ($got - $want) / $want * 100 } else { 0 }
+            $sign = if ($delta -ge 0) { "+" } else { "" }
+            $line = "  {0,-6} {1,-12} {2,7:N0}  baseline {3,7:N0}  {4}{5:N1}%" -f `
+                    $k, $m.n, $got, $want, $sign, $delta
+            if ($delta -gt $tol) { Write-Host "$line  REGRESSED" -ForegroundColor Red; $bad++ }
+            elseif ($delta -lt (-$tol)) { Write-Host "$line  improved -- re-record" -ForegroundColor Green }
+            else { Write-Host $line -ForegroundColor DarkGray }
+        }
+    }
+
+    Write-Host ""
+    if ($bad -gt 0) {
+        Write-Host "$bad measurement(s) regressed past tolerance." -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "Within tolerance of the baseline." -ForegroundColor Green
+}
