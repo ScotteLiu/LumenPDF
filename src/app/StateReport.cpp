@@ -66,15 +66,23 @@ bool write(const QString &filePath,
     QJsonArray pageTextLengths;
     QJsonArray pageWidths;
     QJsonArray pageLinks;
+    QJsonArray pageTextHeads;
     for (int i = 0; i < reportedPages; ++i) {
         pageTextLengths.append(controller->pageTextLength(i));
         pageWidths.append(controller->pageWidthPoints(i));
         pageLinks.append(controller->linkCount(i));
+
+        // The first line of each page, so a test can assert *which* page is
+        // where. Length alone cannot tell a correctly restored page from the
+        // wrong one, which is why every undo assertion was vacuous. The text
+        // is already extracted by pageTextLength above, so this is free.
+        pageTextHeads.append(controller->pageTextHead(i, 40));
     }
     root["reportedPages"] = reportedPages;
     root["pageTextLengths"] = pageTextLengths;
     root["pageWidthsPoints"] = pageWidths;
     root["pageLinkCounts"] = pageLinks;
+    root["pageTextHeads"] = pageTextHeads;
 
     root["pdfiumProbes"] = controller->pdfiumProbes();
 

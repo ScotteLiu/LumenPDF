@@ -169,6 +169,11 @@ public:
     // redaction destroyed content, which a rendered black box cannot prove.
     Q_INVOKABLE int pageTextLength(int index) const;
 
+    // The first `limit` characters of a page's text, whitespace collapsed.
+    // Exists so a test can assert which page ended up where -- a page count
+    // cannot distinguish a correctly restored page from the wrong one.
+    Q_INVOKABLE QString pageTextHead(int index, int limit = 40) const;
+
     // The editable text run under a point, as a map QML can read directly:
     // { valid, objectIndex, text, x, y, width, height, fontSize, longRun }.
     // Coordinates are PDF points with a top-left origin.

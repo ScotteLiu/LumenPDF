@@ -128,6 +128,17 @@ int DocumentController::pageTextLength(int index) const
     return m_document->pageText(index).size();
 }
 
+QString DocumentController::pageTextHead(int index, int limit) const
+{
+    if (!m_document || !m_document->isValid() || index < 0 || index >= m_document->pageCount())
+        return {};
+
+    // Whitespace collapsed so the value does not depend on how the generator
+    // happened to break lines.
+    const QString text = m_document->pageText(index).simplified();
+    return text.left(qMax(0, limit));
+}
+
 QVariantMap DocumentController::textRunAt(int pageIndex, const QPointF &point) const
 {
     QVariantMap result;

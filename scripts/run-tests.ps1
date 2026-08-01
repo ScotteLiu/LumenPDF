@@ -368,11 +368,70 @@ if (Start-Case "redact-destroys-text") {
 }
 
 if (Start-Case "pageops-undo") {
-    foreach ($op in @("rotate,1,1", "delete,1", "move,0,2")) {
-        $target = Join-Path $scratch "pageop.pdf"
-        Copy-Item $latin $target -Force
-        $r = Invoke-Lumen -Pdf $target -Name "pageop" -Hooks @{ LUMEN_PAGEOP = "$op,undo" }
-        if ($r.ok) { Assert-Equal 3 $r.report.pageCount "undo of '$op' restores the page count" }
+    # These used to assert only the page count. Rotate and move do not change
+    # it, so two of the three assertions held identically if undo() had
+    # returned false immediately -- and even the delete case could not tell a
+    # correctly restored page from a duplicate of the wrong one.
+    #
+    # The fixture is A4: 595 pt portrait, 842 pt on its side.
+    # pageTextHeads makes "which page is where" assertable: the fixture writes
+    # "Latin fixture page N" at the top of each page.
+    $target = Join-Path $scratch "pageop.pdf"
+
+    # -- rotate: the page geometry actually turns, and comes back ------------
+    Copy-Item $latin $target -Force
+    $r = Invoke-Lumen -Pdf $target -Name "pageop-rotate" -Hooks @{ LUMEN_PAGEOP = "rotate,1,1" }
+    if ($r.ok) {
+        Assert-Equal 842 ([math]::Round($r.report.pageWidthsPoints[1])) `
+            "a quarter turn makes page 2 landscape"
+    }
+
+    Copy-Item $latin $target -Force
+    $r = Invoke-Lumen -Pdf $target -Name "pageop-rotate-undo" -Hooks @{ LUMEN_PAGEOP = "rotate,1,1;undo" }
+    if ($r.ok) {
+        Assert-Equal 595 ([math]::Round($r.report.pageWidthsPoints[1])) `
+            "undoing the rotation puts it back to portrait"
+    }
+
+    # -- move: the order changes, and comes back ----------------------------
+    Copy-Item $latin $target -Force
+    $r = Invoke-Lumen -Pdf $target -Name "pageop-move" -Hooks @{ LUMEN_PAGEOP = "move,0,2" }
+    if ($r.ok) {
+        Assert-True ($r.report.pageTextHeads[2] -match "page 1") `
+            "moving page 1 to the end puts it at the end"
+        Assert-True ($r.report.pageTextHeads[0] -match "page 2") `
+            "and page 2 moves up"
+    }
+
+    Copy-Item $latin $target -Force
+    $r = Invoke-Lumen -Pdf $target -Name "pageop-move-undo" -Hooks @{ LUMEN_PAGEOP = "move,0,2;undo" }
+    if ($r.ok) {
+        Assert-True ($r.report.pageTextHeads[0] -match "page 1") `
+            "undo restores the original order"
+        Assert-True ($r.report.pageTextHeads[2] -match "page 3") "for both ends"
+    }
+
+    # -- delete: the right page goes, and the right one comes back ----------
+    Copy-Item $latin $target -Force
+    $r = Invoke-Lumen -Pdf $target -Name "pageop-delete" -Hooks @{ LUMEN_PAGEOP = "delete,1" }
+    if ($r.ok) {
+        Assert-Equal 2 $r.report.pageCount "deleting leaves two pages"
+        Assert-True ($r.report.pageTextHeads[1] -match "page 3") "and page 2 is the one that went"
+    }
+
+    # -- the sequence that pins redo's stash-index write-back ---------------
+    #
+    # redo() had zero coverage: LUMEN_PAGEOP only understood "undo", so the
+    # m_commands[m_position] = command write-back -- which rewrites Delete's
+    # stash index on re-apply -- had never executed. Lose it and a following
+    # undo reinserts the wrong page, silently, with a green suite.
+    Copy-Item $latin $target -Force
+    $r = Invoke-Lumen -Pdf $target -Name "pageop-redo" -Hooks @{ LUMEN_PAGEOP = "delete,1;undo;redo;undo" }
+    if ($r.ok) {
+        Assert-Equal 3 $r.report.pageCount "delete, undo, redo, undo ends with three pages"
+        Assert-True ($r.report.pageTextHeads[0] -match "page 1") "page 1 is page 1"
+        Assert-True ($r.report.pageTextHeads[1] -match "page 2") "the restored page is the right one"
+        Assert-True ($r.report.pageTextHeads[2] -match "page 3") "page 3 is page 3"
     }
 }
 

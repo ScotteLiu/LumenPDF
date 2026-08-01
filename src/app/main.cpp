@@ -368,36 +368,52 @@ int main(int argc, char *argv[])
         }
     }
 
-    // Test hook: run a page operation, as "rotate,<page>,<turns>",
-    // "delete,<page>" or "move,<from>,<to>". Append ",undo" to exercise the
-    // undo path in the same run.
+    // Test hook: run page operations. Steps are separated by ';' and run in
+    // order, so a whole undo/redo sequence is one run:
+    //
+    //   "rotate,<page>,<turns>"  "delete,<page>"  "move,<from>,<to>"
+    //   "merge,<path>"           "extract,<path>,<from>[,<to>]"
+    //   "undo"                   "redo"
+    //
+    //   LUMEN_PAGEOP="delete,1;undo;redo;undo"
+    //
+    // Sequencing is what makes redo() reachable at all -- it had no coverage,
+    // so the stash-index write-back in PageOperations::redo() had never run.
     if (qEnvironmentVariableIsSet("LUMEN_PAGEOP")) {
-        const QStringList parts = qEnvironmentVariable("LUMEN_PAGEOP").split(u',');
+        const QStringList steps = qEnvironmentVariable("LUMEN_PAGEOP").split(u';');
         QObject::connect(controller, &lumen::DocumentController::documentChanged,
-                         controller, [controller, parts] {
-                             if (controller->pageCount() <= 0 || parts.isEmpty())
+                         controller, [controller, steps] {
+                             if (controller->pageCount() <= 0 || steps.isEmpty())
                                  return;
 
                              auto *pages = controller->pages();
-                             const QString op = parts.at(0);
 
-                             if (op == QLatin1String("rotate") && parts.size() >= 3)
-                                 pages->rotate(parts.at(1).toInt(), parts.at(2).toInt());
-                             else if (op == QLatin1String("delete") && parts.size() >= 2)
-                                 pages->remove(parts.at(1).toInt());
-                             else if (op == QLatin1String("move") && parts.size() >= 3)
-                                 pages->move(parts.at(1).toInt(), parts.at(2).toInt());
+                             for (const QString &step : steps) {
+                                 const QStringList parts = step.split(u',');
+                                 if (parts.isEmpty())
+                                     continue;
+                                 const QString op = parts.at(0).trimmed();
 
-                             else if (op == QLatin1String("merge") && parts.size() >= 2)
-                                 pages->mergeFrom(QUrl::fromLocalFile(parts.at(1)));
-                             else if (op == QLatin1String("extract") && parts.size() >= 3)
-                                 pages->extractTo(QUrl::fromLocalFile(parts.at(1)),
-                                                  parts.at(2).toInt(),
-                                                  parts.size() >= 4 ? parts.at(3).toInt()
-                                                                    : parts.at(2).toInt());
+                                 if (op == QLatin1String("rotate") && parts.size() >= 3)
+                                     pages->rotate(parts.at(1).toInt(), parts.at(2).toInt());
+                                 else if (op == QLatin1String("delete") && parts.size() >= 2)
+                                     pages->remove(parts.at(1).toInt());
+                                 else if (op == QLatin1String("move") && parts.size() >= 3)
+                                     pages->move(parts.at(1).toInt(), parts.at(2).toInt());
 
-                             if (parts.contains(QLatin1String("undo")))
-                                 pages->undo();
+                                 else if (op == QLatin1String("merge") && parts.size() >= 2)
+                                     pages->mergeFrom(QUrl::fromLocalFile(parts.at(1)));
+                                 else if (op == QLatin1String("extract") && parts.size() >= 3)
+                                     pages->extractTo(QUrl::fromLocalFile(parts.at(1)),
+                                                      parts.at(2).toInt(),
+                                                      parts.size() >= 4 ? parts.at(3).toInt()
+                                                                        : parts.at(2).toInt());
+
+                                 else if (op == QLatin1String("undo"))
+                                     pages->undo();
+                                 else if (op == QLatin1String("redo"))
+                                     pages->redo();
+                             }
                          },
                          Qt::SingleShotConnection);
     }
