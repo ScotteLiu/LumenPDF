@@ -132,6 +132,14 @@ if (Test-Path $ownLicense) {
     Copy-Item $ownLicense (Join-Path $stageDir "LICENSE.txt") -Force
 }
 
+# Apache 2.0 section 4(d): if the work carries a NOTICE file, redistributions
+# must include it. That is an obligation on anyone shipping this, so it had
+# better be in the package they are shipping.
+$notice = Join-Path $repoRoot "NOTICE"
+if (Test-Path $notice) {
+    Copy-Item $notice (Join-Path $stageDir "NOTICE.txt") -Force
+}
+
 $pdfiumLicense = Join-Path $repoRoot "third_party\pdfium\LICENSE"
 if (Test-Path $pdfiumLicense) {
     Copy-Item $pdfiumLicense (Join-Path $licenseDir "PDFium-LICENSE.txt") -Force

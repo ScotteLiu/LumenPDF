@@ -44,9 +44,11 @@ ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequiredOverridesAllowed=dialog
 PrivilegesRequired=lowest
 
-; Shown before installation. BSL is not a licence people have memorised, so it
-; has to be put in front of them rather than buried in a folder.
-LicenseFile=..\LICENSE
+; No licence page. Under BSL there was something the reader genuinely had to
+; agree to; Apache 2.0 grants everything and requires no acceptance, so a
+; click-through would be ceremony. LICENSE.txt ships in the install folder and
+; LICENSES\ carries the third-party texts, which is what the obligations
+; actually require.
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

@@ -259,26 +259,51 @@ form filling, and text correction.
 
 ## Licensing
 
-LumenPDF itself is under the **Business Source License 1.1** — the source is
-public and readable, personal, academic and non-profit use is free, commercial
-use requires a licence, and on **2030-07-30** it converts automatically to
-Apache 2.0.
+LumenPDF is under the **Apache License 2.0**. Free for anything, including
+commercial use, with no obligation to ask.
 
-That combination is deliberate. A tool that claims to redact documents is
-asking to be trusted with something irreversible, and "read the code yourself"
-is the only honest answer to that. Keeping it source-available rather than
-proprietary makes that answer possible without giving away the ability to sell
-it. If you want to use LumenPDF commercially, get in touch.
+It started under the Business Source License, which reserved commercial rights
+until 2030. That was the wrong trade. A tool that claims to *destroy* text on a
+page is asking to be trusted with something irreversible, and "read the code
+yourself" is the only honest answer to that — which argues for the most
+permissive licence, not a restricted one. The reserved commercial rights were
+protecting revenue that was never going to arrive, while shutting the project
+out of Linux distributions, free code signing for open source, and anyone who
+might have wanted to help.
+
+If it is useful to you, [contributions and donations](#contributing) are the
+support model. Neither is required.
+
+**The name is not part of the licence.** Section 6 of Apache 2.0 grants no
+trademark rights: fork it, change it, sell it — but an unofficial build should
+not call itself LumenPDF. See [NOTICE](NOTICE).
 
 | Component | Licence | Note |
 |---|---|---|
-| LumenPDF | BSL 1.1 → Apache 2.0 on 2030-07-30 | Free for personal, academic and non-profit use. |
-| Qt 6 | LGPLv3 | **Dynamically linked.** Static linking would require a commercial Qt licence. |
-| PDFium | BSD-3-Clause | Safe for commercial distribution. |
+| LumenPDF | Apache 2.0 | Free for any use. |
+| Qt 6 | LGPLv3 | **Dynamically linked.** The `Qt6*.dll` files sit next to the executable and can be replaced; static linking would require a commercial Qt licence. |
+| PDFium | BSD-3-Clause | |
 | Inter (planned) | SIL OFL 1.1 | Stands in for SF Pro, which cannot be redistributed. |
 
-MuPDF is deliberately not used: it is AGPL, which would force this project open
-or require a commercial licence.
+MuPDF is deliberately not used: it is AGPL, which would make the licence above
+impossible.
+
+## Contributing
+
+The two things that would help most are the two this project cannot do alone:
+
+**Translations.** The interface ships in English, 繁體中文, 简体中文 and 日本語.
+Adding a language is one JSON file — see
+[translations/README.md](translations/README.md). Only complete translations are
+built in, so a half-finished one is never shown to anyone.
+
+**macOS and Linux.** Every platform-specific call is already isolated in
+`src/platform/`, and the graphics backend is chosen in one place in `main.cpp`.
+The port is real work, but it is not archaeology.
+
+Bug reports are welcome, especially with the PDF that caused them — this project
+has been wrong about text extraction in four different writing systems so far,
+and every one of those was found by someone looking at a real document.
 
 ## Platforms
 

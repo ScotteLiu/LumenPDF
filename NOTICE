@@ -1,0 +1,44 @@
+LumenPDF
+Copyright 2026 Scotte Liu
+
+This product includes software developed by Scotte Liu.
+
+Licensed under the Apache License, Version 2.0. See LICENSE.
+
+--------------------------------------------------------------------------------
+Trademark
+--------------------------------------------------------------------------------
+
+"LumenPDF" is a trademark of Scotte Liu.
+
+Section 6 of the Apache License does not grant permission to use the licensor's
+trade names or trademarks. You may fork, modify, redistribute and sell this
+software under the terms of the licence, but a distribution that is not the
+official one should not be called LumenPDF, and should not present itself as
+coming from this project.
+
+--------------------------------------------------------------------------------
+Third-party components
+--------------------------------------------------------------------------------
+
+Qt 6
+  Copyright (C) The Qt Company Ltd. and other contributors.
+  Licensed under the GNU Lesser General Public License version 3.
+  https://www.qt.io/licensing/
+
+  Qt is DYNAMICALLY LINKED. The LGPL requires that you be able to replace it
+  with your own build: the Qt6*.dll files ship alongside the executable and can
+  be replaced directly, and the full source of this application is published so
+  it can be rebuilt against a modified Qt.
+
+PDFium
+  Copyright 2014 The PDFium Authors.
+  Licensed under the BSD 3-Clause License.
+  https://pdfium.googlesource.com/pdfium/
+
+  PDFium bundles further components under their own licences; their texts are
+  distributed in the LICENSES directory of every release.
+
+Windows.Media.Ocr
+  Part of Windows. Used through the operating system rather than bundled, which
+  is why text recognition adds nothing to the download size.
