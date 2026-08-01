@@ -290,6 +290,17 @@ private:
     void buildOutline();
     void invalidatePage(int pageIndex);
 
+    // Drops the text cache AND the held form page, unconditionally. For
+    // operations that renumber or remove pages, where the held index stops
+    // naming the page it was acquired for. Must run before the mutation, while
+    // that index is still correct. Caller holds m_mutex.
+    void releaseAllPageCaches();
+
+    // Kills form focus and releases the held page, which is what makes PDFium
+    // write an edited field value back into the document. Caller holds
+    // m_mutex -- formClearFocus() is the locking wrapper.
+    void commitFormEditsLocked() const;
+
     // Re-reads page sizes after an operation that renumbered pages.
     // Caller holds m_mutex.
     void rebuildPageInfo();

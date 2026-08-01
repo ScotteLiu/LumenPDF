@@ -211,6 +211,22 @@ if(WIN32)
     # and std::min/std::max wherever it is pulled in -- and PDFium's headers pull
     # it in. WIN32_LEAN_AND_MEAN also keeps the include cheap.
     target_compile_definitions(lumenpdf PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+
+    # -- Delay-load the printing stack ---------------------------------------
+    #
+    # Qt6PrintSupport depends on Qt6Widgets, so linking it normally loads 6.6 MB
+    # of DLLs into every process that opens a PDF -- whether or not anyone ever
+    # prints. That is why the print sheet is QML rather than QPrintDialog, and
+    # linking PrintSupport gave the dependency back anyway.
+    #
+    # Delay-loading moves both to the first QPrinter call. Startup and idle
+    # memory go back to what they were before printing existed; the cost shows
+    # up once, when the print sheet is opened.
+    target_link_options(lumenpdf PRIVATE
+        /DELAYLOAD:Qt6PrintSupport.dll
+        /DELAYLOAD:Qt6Widgets.dll
+    )
+    target_link_libraries(lumenpdf PRIVATE delayimp)
 endif()
 
 # ---------------------------------------------------------------------------

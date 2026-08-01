@@ -35,7 +35,10 @@ public:
     void setDocument(const QSharedPointer<PdfDocument> &document);
 
     QStringList printers() const;
-    QString printer() const { return m_printer; }
+
+    // Not inline: reading this resolves the system default on first call, and
+    // that first call is what loads the printing stack.
+    QString printer() const;
     void setPrinter(const QString &name);
 
     bool isBusy() const { return m_watcher != nullptr; }
@@ -68,8 +71,12 @@ private:
              int firstPage, int lastPage, int copies,
              bool greyscale, bool fitToPage);
 
+    // Mutable so the getter can stay const while filling this in lazily.
+    void resolveDefaultPrinter() const;
+
     QSharedPointer<PdfDocument> m_document;
-    QString m_printer;
+    mutable QString m_printer;
+    mutable bool m_printerResolved = false;
     qreal m_progress = 0.0;
 
     QFutureWatcher<int> *m_watcher = nullptr;

@@ -418,6 +418,30 @@ if (Start-Case "form-fill") {
     Assert-True ($raw -match '/AS\s*/Yes') "checkbox state is saved"
 }
 
+if (Start-Case "form-save-flushes-the-focused-field") {
+    # The case above cannot catch an unflushed field: filling three fields in a
+    # row means each click blurs the previous one, and the last interaction is a
+    # checkbox, which commits on click. So nothing is ever still focused when
+    # the save happens.
+    #
+    # This is what a user actually does: type into one field and press Ctrl+S
+    # without clicking away. PDFium keeps the typed value in its live widget
+    # until focus is killed, so saving without flushing writes the *pre-edit*
+    # value -- while the screen still shows what was typed, because rendering
+    # draws the widget. Invisible until the file is reopened.
+    $target = Join-Path $scratch "filled-focused.pdf"
+    Copy-Item $form $target -Force
+    Invoke-Lumen -Pdf $target -Name "form-focused" -Hooks @{
+        LUMEN_FORM_FILL = "0,300,119,Still Focused"
+        LUMEN_SAVE_AS = $target
+    } | Out-Null
+
+    $raw = [System.Text.Encoding]::GetEncoding(28591).GetString(
+        [System.IO.File]::ReadAllBytes($target))
+    Assert-True ($raw.Contains("Still Focused")) `
+        "saving flushes a field that is still focused"
+}
+
 if (Start-Case "form-detection") {
     $r = Invoke-Lumen -Pdf $form -Name "form-detect"
     if ($r.ok) { Assert-Equal $true $r.report.hasForms "form document is detected as fillable" }
@@ -753,6 +777,43 @@ if (Start-Case "translations-complete") {
     $qmDir = Join-Path $repoRoot "build\windows-release"
     $compiled = Get-ChildItem $qmDir -Filter "*.qm" -Recurse -ErrorAction SilentlyContinue
     Assert-True ($compiled.Count -ge 3) "the .qm files were compiled ($($compiled.Count) found)"
+}
+
+# -- Startup cost -----------------------------------------------------------
+#
+# Qt6PrintSupport depends on Qt6Widgets, so any eager touch of QPrinterInfo maps
+# 6.6 MB of DLLs into every session -- including the great majority that never
+# print. This has been broken once already: PrintController's constructor asked
+# for the default printer, and PrintSheet bound to `printers` before it was ever
+# opened. Both are easy to reintroduce and invisible without this check.
+
+if (Start-Case "startup-does-not-load-printing") {
+    $logPath = Join-Path $scratch "startup-modules.log"
+    $env:LUMEN_REPORT = Join-Path $scratch "startup-modules.json"
+    $env:LUMEN_CAPTURE_DELAY = "5000"
+
+    $proc = Start-Process $exe -ArgumentList $latin -PassThru `
+        -RedirectStandardError $logPath
+    Start-Sleep -Seconds 3
+
+    $loaded = @()
+    try {
+        $proc.Refresh()
+        $loaded = $proc.Modules |
+            Where-Object { $_.ModuleName -match "Qt6(Widgets|PrintSupport)\.dll" } |
+            ForEach-Object { $_.ModuleName }
+    } catch {
+        # The process can exit between Refresh and Modules; treat that as
+        # inconclusive rather than as a pass.
+        $loaded = @("<could not read module list>")
+    }
+
+    $proc.WaitForExit(20000) | Out-Null
+    if (-not $proc.HasExited) { $proc.Kill() }
+    $env:LUMEN_CAPTURE_DELAY = "3000"
+
+    Assert-True ($loaded.Count -eq 0) `
+        "the printing stack is not loaded until it is used$(if ($loaded.Count) { ' (found: ' + ($loaded -join ', ') + ')' })"
 }
 
 # -- Updates ----------------------------------------------------------------

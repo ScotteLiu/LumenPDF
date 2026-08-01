@@ -45,7 +45,28 @@ QSize rasterSize(const QSizeF &pointSize, int dpi)
 PrintController::PrintController(QObject *parent)
     : QObject(parent)
 {
+    // Deliberately does NOT ask for the default printer here.
+    //
+    // QPrinterInfo is the first touch of Qt6PrintSupport, which depends on
+    // Qt6Widgets -- so resolving it in the constructor maps 6.6 MB of DLLs into
+    // every session, including the overwhelming majority that never print. The
+    // name is resolved on first use instead, which is when the print sheet
+    // opens.
+}
+
+void PrintController::resolveDefaultPrinter() const
+{
+    if (m_printerResolved) {
+        return;
+    }
+    m_printerResolved = true;
     m_printer = QPrinterInfo::defaultPrinterName();
+}
+
+QString PrintController::printer() const
+{
+    resolveDefaultPrinter();
+    return m_printer;
 }
 
 PrintController::~PrintController()
@@ -68,6 +89,10 @@ QStringList PrintController::printers() const
 
 void PrintController::setPrinter(const QString &name)
 {
+    // Mark resolved: an explicit choice must not be overwritten by a later
+    // lazy lookup of the system default.
+    m_printerResolved = true;
+
     if (m_printer == name) {
         return;
     }
@@ -82,7 +107,11 @@ int PrintController::pageCount() const
 
 void PrintController::refreshPrinters()
 {
+    resolveDefaultPrinter();
     emit printersChanged();
+
+    // A printer that has been removed since the last look must not stay
+    // selected, or printing fails with a name nobody chose.
     if (!printers().contains(m_printer)) {
         setPrinter(QPrinterInfo::defaultPrinterName());
     }

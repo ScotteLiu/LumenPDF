@@ -29,7 +29,14 @@ Item {
     opacity: 0
     z: 445
 
+    // Nothing inside this sheet is built until it is first opened. That is not
+    // only about object-creation cost: reading `printers` is the first touch of
+    // Qt6PrintSupport, which pulls in Qt6Widgets, and a binding evaluated at
+    // startup would map both into every session whether or not anyone prints.
+    property bool everOpened: false
+
     function open() {
+        root.everOpened = true;
         root.wholeDocument = true;
         root.firstPage = 0;
         root.lastPage = -1;
@@ -87,6 +94,18 @@ Item {
 
     readonly property int effectiveFirst: wholeDocument ? -1 : firstPage
     readonly property int effectiveLast: wholeDocument ? -1 : lastPage
+
+    Loader {
+        anchors.fill: parent
+        active: root.everOpened
+        sourceComponent: sheetBody
+    }
+
+    Component {
+        id: sheetBody
+
+    Item {
+        anchors.fill: parent
 
     Rectangle {
         anchors.fill: parent
@@ -376,4 +395,7 @@ Item {
             }
         }
     }
+
+    }   // Item, the body wrapped by the Loader
+    }   // Component: sheetBody
 }

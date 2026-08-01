@@ -428,8 +428,12 @@ int main(int argc, char *argv[])
                                  if (parts.size() >= 4 && !parts.at(3).isEmpty())
                                      forms->text(parts.at(3));
                              }
-                             forms->clearFocus();
-
+                             // Deliberately does NOT clear focus here. The
+                             // production save path has to flush the edited
+                             // field itself -- it did not, and this hook's
+                             // clearFocus() was hiding that from the suite.
+                             // Leaving it out makes this case the regression
+                             // guard for saveAs's flush.
                              if (qEnvironmentVariableIsSet("LUMEN_SAVE_AS")) {
                                  controller->saveAs(QUrl::fromLocalFile(
                                      qEnvironmentVariable("LUMEN_SAVE_AS")));

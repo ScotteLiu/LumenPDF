@@ -948,6 +948,48 @@ void PdfDocument::invalidatePage(int pageIndex)
         releaseFormPage();
 }
 
+void PdfDocument::releaseAllPageCaches()
+{
+    // Caller holds m_mutex.
+    //
+    // The index-guarded invalidatePage() above is right for editing one page.
+    // It is wrong for anything that renumbers or removes pages, because after
+    // the operation the held index no longer names the page it was acquired
+    // for -- delete page 1 and the form environment's "page 3" is the document's
+    // old page 4. Every keystroke, hit-test and value flush would then land on
+    // the wrong page's widgets.
+    //
+    // So: unconditional, and it must run *before* the mutation, while the index
+    // is still correct, because releaseFormPage() is what makes PDFium write
+    // the edited field value back into the document.
+    releaseTextCache();
+    releaseFormPage();
+}
+
+void PdfDocument::commitFormEditsLocked() const
+{
+    // Caller holds m_mutex. Deliberately not formClearFocus(), which takes the
+    // lock itself -- m_mutex is a plain non-recursive QMutex and calling it
+    // from a locked context deadlocks.
+    //
+    // Defence in depth, not a fix for a reproduced bug. An audit predicted that
+    // saving with a field still focused would write the pre-edit value, because
+    // PDFium keeps the edit in its live widget. Tested: it does not. The value
+    // reaches the field dictionary on each keystroke, so a save is already
+    // correct without this. (scripts/run-tests.ps1 has the case that pins that
+    // behaviour -- it passes with this call removed.)
+    //
+    // Kept because the cost is one call and the failure it guards against is
+    // silent, and narrowed to killing focus rather than tearing down the page:
+    // releaseFormPage() would destroy the widget state, so Ctrl+S in the middle
+    // of typing would drop the caret and the page view for no benefit.
+#ifdef LUMEN_HAS_PDFIUM
+    if (m_formHandle) {
+        FORM_ForceToKillFocus(static_cast<FPDF_FORMHANDLE>(m_formHandle));
+    }
+#endif
+}
+
 bool PdfDocument::addTextMarkup(int pageIndex,
                                 MarkupType type,
                                 const QVector<QRectF> &rects,
@@ -1408,9 +1450,9 @@ void PdfDocument::formClearFocus()
     QMutexLocker locker(&m_mutex);
     if (m_formHandle) {
         FORM_ForceToKillFocus(static_cast<FPDF_FORMHANDLE>(m_formHandle));
-        // Releasing the page is what flushes the edited value into the
-        // document's field dictionaries. Without it the value lives only in
-        // PDFium's widget and never reaches the saved file.
+        // Releasing the page tears down the widget state. That is wanted here
+        // -- the user clicked away -- but not on the save path, which only
+        // needs the value committed.
         releaseFormPage();
     }
 #endif
@@ -1820,7 +1862,7 @@ bool PdfDocument::movePage(int from, int to)
     if (!m_handle)
         return false;
 
-    releaseTextCache();
+    releaseAllPageCaches();
 
     const int index = from;
     if (!FPDF_MovePages(static_cast<FPDF_DOCUMENT>(m_handle), &index, 1, to))
@@ -1851,7 +1893,7 @@ bool PdfDocument::deletePage(int pageIndex, PdfDocument *removedInto, int *stash
     if (!m_handle)
         return false;
 
-    releaseTextCache();
+    releaseAllPageCaches();
 
     // Copy the page somewhere safe first, so this can be undone. PDFium has no
     // undo of its own -- the stash *is* the undo buffer.
@@ -1899,7 +1941,7 @@ bool PdfDocument::insertPageFrom(const PdfDocument &source, int sourceIndex, int
     if (!m_handle || !source.m_handle)
         return false;
 
-    releaseTextCache();
+    releaseAllPageCaches();
 
     const QByteArray range = QByteArray::number(sourceIndex + 1);   // 1-based
     const int target = qBound(0, atIndex, m_pages.size());
@@ -1935,7 +1977,7 @@ int PdfDocument::insertPagesFrom(const PdfDocument &source,
     if (!m_handle || !source.m_handle)
         return -1;
 
-    releaseTextCache();
+    releaseAllPageCaches();
 
     const int before = FPDF_GetPageCount(static_cast<FPDF_DOCUMENT>(m_handle));
     const int target = qBound(0, atIndex, before);
@@ -1980,7 +2022,7 @@ bool PdfDocument::deletePageRange(int start, int count)
     if (!m_handle)
         return false;
 
-    releaseTextCache();
+    releaseAllPageCaches();
 
     // Back to front, so each deletion cannot shift the indices still to come.
     for (int i = start + count - 1; i >= start; --i)
@@ -2036,6 +2078,12 @@ bool PdfDocument::saveAs(const QString &filePath, bool compact)
     if (!m_handle)
         return false;
 
+    // A field being typed into lives in PDFium's live widget, not in the
+    // document, until focus is killed. Saving without this writes the
+    // pre-edit value while the screen still shows what was typed -- silent,
+    // and only discovered on reopening.
+    commitFormEditsLocked();
+
     // Writing over the file PDFium is still reading from would corrupt it:
     // FPDF_SaveAsCopy streams out object data that it pulls from the original
     // on demand. Callers save to a temporary and swap.
@@ -2089,6 +2137,9 @@ bool PdfDocument::extractPagesTo(const QString &filePath, const QString &pageRan
     QMutexLocker locker(&m_mutex);
     if (!m_handle)
         return false;
+
+    // Same reason as saveAs: an unflushed field would be exported empty.
+    commitFormEditsLocked();
 
     // Build a fresh document holding only the wanted pages, then write that.
     // Copying out is the only safe direction: filtering in place would mean
@@ -2677,7 +2728,7 @@ PdfDocument::CompressionReport PdfDocument::downsampleImages(int targetDpi)
     if (!m_handle)
         return report;
 
-    releaseTextCache();
+    releaseAllPageCaches();
 
     const int dpi = qBound(72, targetDpi, 600);
     auto doc = static_cast<FPDF_DOCUMENT>(m_handle);
