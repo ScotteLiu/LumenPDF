@@ -530,6 +530,28 @@ int main(int argc, char *argv[])
         }
     }
 
+    // Test hook: run a release asset name through the sanitiser and print what
+    // came back. Empty means rejected.
+    if (qEnvironmentVariableIsSet("LUMEN_UPDATE_ASSET")) {
+        const QString accepted = lumen::UpdateChecker::sanitiseAssetNameForTest(
+            qEnvironmentVariable("LUMEN_UPDATE_ASSET"));
+        qInfo("update-asset: [%s]", qPrintable(accepted));
+    }
+
+    // Test hook: drive the verify-and-promote step over a local file, with no
+    // network. "<path>,<expected-sha256-hex>".
+    if (qEnvironmentVariableIsSet("LUMEN_UPDATE_VERIFY")) {
+        const QStringList parts = qEnvironmentVariable("LUMEN_UPDATE_VERIFY").split(u',');
+        if (parts.size() >= 2) {
+            QString promoted;
+            QString reason;
+            const bool ok = lumen::UpdateChecker::verifyAndPromote(
+                parts.at(0), parts.at(1), &promoted, &reason);
+            qInfo("update-verify: ok=%d promoted=[%s] reason=[%s]",
+                  ok ? 1 : 0, qPrintable(promoted), qPrintable(reason));
+        }
+    }
+
     // Test hook: record a reading position, so a following run can assert that
     // it came back. The QML side does this on a timer as the user scrolls.
     if (qEnvironmentVariableIsSet("LUMEN_NOTE_PAGE")) {

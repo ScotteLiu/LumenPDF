@@ -59,6 +59,19 @@ public:
     // Returns >0 when `a` is newer than `b`, <0 when older, 0 when equal.
     Q_INVOKABLE static int compareVersions(const QString &a, const QString &b);
 
+    // Hashes `partPath`, compares it to `expectedHex`, and only on a match
+    // renames it to the same path without the ".part" suffix. Deletes the file
+    // on any failure. Split out of the download so the branch that decides
+    // whether to hand somebody a runnable installer can be tested offline.
+    static bool verifyAndPromote(const QString &partPath,
+                                 const QString &expectedHex,
+                                 QString *outPath,
+                                 QString *outError);
+
+    // Exposed for tests: reduces a release asset name to a safe filename, or
+    // returns empty to reject it.
+    Q_INVOKABLE static QString sanitiseAssetNameForTest(const QString &name);
+
 signals:
     void stateChanged();
     void downloadChanged();

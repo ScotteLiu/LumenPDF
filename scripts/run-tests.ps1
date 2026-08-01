@@ -70,7 +70,7 @@ $hookNames = @("LUMEN_SEARCH", "LUMEN_SELECT", "LUMEN_SELECT_WORD", "LUMEN_ANNOT
                "LUMEN_FORM_FILL", "LUMEN_THEME", "LUMEN_SIDEBAR_TAB", "LUMEN_CAPTURE",
                "LUMEN_EDIT_TEXT", "LUMEN_BENCH", "LUMEN_OCR",
                "LUMEN_PRINT", "LUMEN_PASSWORD", "LUMEN_LINK_PROBE", "LUMEN_NOTE_PAGE",
-               "LUMEN_VERSION_COMPARE")
+               "LUMEN_VERSION_COMPARE", "LUMEN_UPDATE_ASSET", "LUMEN_UPDATE_VERIFY")
 
 $env:QT_FORCE_STDERR_LOGGING = "1"
 $env:LUMEN_CAPTURE_DELAY = "3000"
@@ -846,6 +846,74 @@ if (Start-Case "update-version-ordering") {
         Assert-Equal $case.expect $actual $case.what
     }
     Remove-Item Env:LUMEN_VERSION_COMPARE -ErrorAction SilentlyContinue
+}
+
+# The update path decides whether to hand somebody a runnable .exe, and until
+# now none of it had ever executed: the sink was opened WriteOnly, so hashing
+# always failed and every download ended in "could not be read back".
+
+if (Start-Case "update-asset-name-is-sanitised") {
+    # The name comes from the release JSON and ends up in a path builder.
+    # QDir::filePath returns its argument unchanged when it is absolute.
+    $cases = @(
+        @{ input = "LumenPDF-0.3.2-win64-setup.exe";                          expect = "LumenPDF-0.3.2-win64-setup.exe"; what = "the real asset name is accepted verbatim" },
+        @{ input = "C:/Users/Public/LumenPDF-9-win64-setup.exe";              expect = "LumenPDF-9-win64-setup.exe";     what = "an absolute path is reduced to its leaf" },
+        @{ input = "..\..\Startup\LumenPDF-9-win64-setup.exe";                expect = "LumenPDF-9-win64-setup.exe";     what = "traversal segments are stripped" },
+        @{ input = "sub/../evil-setup.exe";                                   expect = "";                              what = "a name that is not ours is rejected" },
+        @{ input = "totally-different-setup.exe";                             expect = "";                              what = "any other setup.exe is rejected" },
+        @{ input = "   ";                                                     expect = "";                              what = "a whitespace name is rejected" },
+        @{ input = ("LumenPDF-" + ("A" * 200) + "-win64-setup.exe");          expect = "";                              what = "an over-long name is rejected" },
+        @{ input = "LumenPDF-0.3.2-win64-setup.exe.exe";                      expect = "";                              what = "a double extension is rejected" }
+    )
+    # An empty name is rejected too, but PowerShell unsets a variable assigned
+    # "", so it cannot be driven through an environment hook. Covered by the
+    # leaf.isEmpty() branch in sanitiseAssetName.
+
+    foreach ($case in $cases) {
+        $logPath = Join-Path $scratch "asset-$($cases.IndexOf($case)).log"
+        $env:LUMEN_UPDATE_ASSET = $case.input
+        $env:LUMEN_REPORT = Join-Path $scratch "asset.json"
+        Start-Process $exe -ArgumentList $latin -Wait -RedirectStandardError $logPath | Out-Null
+        $line = Get-Content $logPath | Select-String "update-asset:" | Select-Object -First 1
+        $actual = if ($line -match "update-asset: \[(.*)\]") { $Matches[1] } else { "<no output>" }
+        Assert-Equal $case.expect $actual $case.what
+    }
+    Remove-Item Env:LUMEN_UPDATE_ASSET -ErrorAction SilentlyContinue
+}
+
+if (Start-Case "update-verify-and-promote") {
+    $part = Join-Path $scratch "LumenPDF-9.9.9-win64-setup.exe.part"
+    $final = Join-Path $scratch "LumenPDF-9.9.9-win64-setup.exe"
+
+    # -- matching hash: the file is promoted --------------------------------
+    Remove-Item $part, $final -Force -ErrorAction SilentlyContinue
+    [System.IO.File]::WriteAllText($part, "pretend installer bytes")
+    $good = (Get-FileHash $part -Algorithm SHA256).Hash.ToLower()
+
+    $logPath = Join-Path $scratch "verify-good.log"
+    $env:LUMEN_UPDATE_VERIFY = "$part,$good"
+    $env:LUMEN_REPORT = Join-Path $scratch "verify.json"
+    Start-Process $exe -ArgumentList $latin -Wait -RedirectStandardError $logPath | Out-Null
+    $line = Get-Content $logPath | Select-String "update-verify:" | Select-Object -First 1
+
+    Assert-True ($line -match "ok=1") "a matching checksum promotes the download"
+    Assert-True (Test-Path $final) "the .exe exists after promotion"
+    Assert-True (-not (Test-Path $part)) "the .part is gone"
+
+    # -- mismatched hash: the file is destroyed -----------------------------
+    Remove-Item $part, $final -Force -ErrorAction SilentlyContinue
+    [System.IO.File]::WriteAllText($part, "tampered installer bytes")
+
+    $logPath = Join-Path $scratch "verify-bad.log"
+    $env:LUMEN_UPDATE_VERIFY = "$part,$good"
+    Start-Process $exe -ArgumentList $latin -Wait -RedirectStandardError $logPath | Out-Null
+    $line = Get-Content $logPath | Select-String "update-verify:" | Select-Object -First 1
+
+    Assert-True ($line -match "ok=0") "a mismatched checksum is refused"
+    Assert-True (-not (Test-Path $final)) "no .exe is left behind on mismatch"
+    Assert-True (-not (Test-Path $part)) "the rejected download is deleted"
+
+    Remove-Item Env:LUMEN_UPDATE_VERIFY -ErrorAction SilentlyContinue
 }
 
 if (Start-Case "release-artefacts-have-checksums") {

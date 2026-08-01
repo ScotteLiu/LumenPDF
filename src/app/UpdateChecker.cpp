@@ -32,6 +32,54 @@ constexpr auto kChecksumAsset = "SHA256SUMS.txt";
 // is not our release.
 constexpr qint64 kMaxDownloadBytes = 300LL * 1024 * 1024;
 
+// Reduces an asset name from the release feed to something safe to use as a
+// filename, or returns empty to reject it.
+//
+// The name arrives as JSON from the network and ends up in QDir::filePath().
+// That returns its argument unchanged when it is absolute, and otherwise just
+// concatenates -- ".." segments included. So an asset called
+// "..\..\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\x-setup.exe"
+// or "C:/Users/Public/x-setup.exe" would have the downloader create, truncate
+// and rename a file wherever the feed said.
+//
+// Whitelist, not blacklist: the only names accepted are the ones this project's
+// own packaging produces.
+QString sanitiseAssetName(const QString &name)
+{
+    // Take the last path component under either separator, so a name that is
+    // a path at all is reduced to its leaf before anything else looks at it.
+    const QString leaf = QFileInfo(QString(name).replace(QLatin1Char('\\'),
+                                                        QLatin1Char('/'))).fileName();
+
+    if (leaf.isEmpty() || leaf.size() > 128)
+        return {};
+
+    // No control characters, including the NUL that truncates a Win32 path.
+    for (const QChar c : leaf) {
+        if (c.category() == QChar::Other_Control)
+            return {};
+    }
+
+    static const QRegularExpression allowed(
+        QStringLiteral("^LumenPDF-[0-9A-Za-z._-]+-win64-setup\\.exe$"));
+
+    return allowed.match(leaf).hasMatch() ? leaf : QString();
+}
+
+// Release assets must come from GitHub over TLS. The URLs are read from the
+// same JSON as everything else, so without this a compromised or spoofed feed
+// could point the downloader anywhere.
+bool isTrustedReleaseUrl(const QUrl &url)
+{
+    if (!url.isValid() || url.scheme() != QLatin1String("https"))
+        return false;
+
+    const QString host = url.host().toLower();
+    return host == QLatin1String("github.com")
+           || host == QLatin1String("objects.githubusercontent.com")
+           || host == QLatin1String("release-assets.githubusercontent.com");
+}
+
 QList<int> parseVersion(const QString &text)
 {
     QString cleaned = text.trimmed();
@@ -90,6 +138,11 @@ int UpdateChecker::compareVersions(const QString &a, const QString &b)
             return l > r ? 1 : -1;
     }
     return 0;
+}
+
+QString UpdateChecker::sanitiseAssetNameForTest(const QString &name)
+{
+    return sanitiseAssetName(name);
 }
 
 void UpdateChecker::check()
@@ -152,12 +205,29 @@ void UpdateChecker::handleReleaseReply(QNetworkReply *reply)
         const QString name = asset.value(QStringLiteral("name")).toString();
         const QUrl url(asset.value(QStringLiteral("browser_download_url")).toString());
 
+        if (!isTrustedReleaseUrl(url)) {
+            qCWarning(lcUpdate) << "ignoring release asset with untrusted URL" << url;
+            continue;
+        }
+
         if (name == QLatin1String(kChecksumAsset)) {
             m_checksumUrl = url;
-        } else if (name.endsWith(QLatin1String("setup.exe"), Qt::CaseInsensitive)) {
-            m_assetName = name;
-            m_assetUrl = url;
+            continue;
         }
+
+        if (!name.endsWith(QLatin1String("setup.exe"), Qt::CaseInsensitive))
+            continue;
+
+        // Sanitised before it is stored, not before it is used -- so there is
+        // no window in which the raw name is reachable by anything.
+        const QString safe = sanitiseAssetName(name);
+        if (safe.isEmpty()) {
+            qCWarning(lcUpdate) << "ignoring release asset with unacceptable name" << name;
+            continue;
+        }
+
+        m_assetName = safe;
+        m_assetUrl = url;
     }
 
     m_updateAvailable = !m_latestVersion.isEmpty()
@@ -250,9 +320,27 @@ void UpdateChecker::startAssetDownload()
 
     // Written to a .part first so a cancelled or failed download never leaves
     // something that looks like a finished installer.
+    //
+    // m_assetName has already been through sanitiseAssetName, but the built
+    // path is confirmed to be inside the downloads directory anyway -- this is
+    // the step that decides where a downloaded executable lands, and one check
+    // is not worth trusting on its own.
     const QString target = QDir(directory).filePath(m_assetName);
+    const QString canonicalDir = QDir::cleanPath(QDir(directory).absolutePath());
+    if (!QDir::cleanPath(QFileInfo(target).absolutePath()).compare(canonicalDir,
+                                                                  Qt::CaseInsensitive) == 0) {
+        m_downloading = false;
+        emit downloadChanged();
+        emit failed(tr("The download location is not valid."));
+        return;
+    }
+
+    // ReadWrite, not WriteOnly: the file is hashed from this handle after the
+    // transfer, and QCryptographicHash::addData(QIODevice*) returns false
+    // immediately for a device that is not readable. Opening it write-only made
+    // verification fail every single time, so no download ever completed.
     m_sink = new QFile(target + QLatin1String(".part"), this);
-    if (!m_sink->open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+    if (!m_sink->open(QIODevice::ReadWrite | QIODevice::Truncate)) {
         delete m_sink;
         m_sink = nullptr;
         m_downloading = false;
@@ -321,56 +409,116 @@ void UpdateChecker::finishDownload()
         return;
     }
 
-    // Verify before the file is given a name that looks runnable.
-    m_sink->seek(0);
-    QCryptographicHash hash(QCryptographicHash::Sha256);
-    if (!hash.addData(m_sink)) {
-        fail(tr("The download could not be read back for verification."));
-        return;
-    }
-    const QString actual = QString::fromLatin1(hash.result().toHex());
-
-    if (actual != m_expectedSha256) {
-        qCWarning(lcUpdate) << "checksum mismatch: expected" << m_expectedSha256
-                            << "got" << actual;
-        fail(tr("The downloaded file does not match its published checksum. "
-                "It has been deleted."));
-        return;
-    }
-
     m_sink->close();
-    QFile::remove(finalPath);
-    const bool renamed = m_sink->rename(finalPath);
     delete m_sink;
     m_sink = nullptr;
 
-    m_downloading = false;
-    m_progress = 1.0;
-
-    if (!renamed) {
+    QString reason;
+    QString promoted;
+    if (!verifyAndPromote(partPath, m_expectedSha256, &promoted, &reason)) {
+        m_downloading = false;
+        m_progress = 0.0;
         emit downloadChanged();
-        emit failed(tr("The verified download could not be moved into place."));
+        emit failed(reason);
         return;
     }
 
-    m_downloadedFile = finalPath;
-    qCInfo(lcUpdate) << "verified" << finalPath;
+    m_downloading = false;
+    m_progress = 1.0;
+    m_downloadedFile = promoted;
+
+    qCInfo(lcUpdate) << "verified" << promoted;
     emit downloadChanged();
-    emit downloadFinished(finalPath);
+    emit downloadFinished(promoted);
+}
+
+bool UpdateChecker::verifyAndPromote(const QString &partPath,
+                                     const QString &expectedHex,
+                                     QString *outPath,
+                                     QString *outError)
+{
+    // Split out of finishDownload so the branch that decides whether to hand
+    // somebody a runnable .exe can be tested without a network. It was
+    // previously unreachable -- the sink was opened WriteOnly, so hashing
+    // always failed and no download ever got this far.
+    QFile part(partPath);
+    if (!part.open(QIODevice::ReadOnly)) {
+        if (outError)
+            *outError = tr("The download could not be read back for verification.");
+        part.remove();
+        return false;
+    }
+
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    const bool hashed = hash.addData(&part);
+    part.close();
+
+    if (!hashed) {
+        if (outError)
+            *outError = tr("The download could not be read back for verification.");
+        part.remove();
+        return false;
+    }
+
+    const QString actual = QString::fromLatin1(hash.result().toHex()).toLower();
+    if (actual != expectedHex.trimmed().toLower()) {
+        qCWarning(lcUpdate) << "checksum mismatch: expected" << expectedHex
+                            << "got" << actual;
+        part.remove();
+        if (outError)
+            *outError = tr("The downloaded file does not match its published "
+                           "checksum. It has been deleted.");
+        return false;
+    }
+
+    // Only now does it get a name that looks runnable.
+    //
+    // An existing file is stepped around rather than overwritten: this path is
+    // derived from a name that came off the network, and silently replacing
+    // whatever is already there is not a downloader's decision to make.
+    QString finalPath = partPath.chopped(5); // ".part"
+    if (QFile::exists(finalPath)) {
+        const QFileInfo info(finalPath);
+        for (int n = 1; n < 100; ++n) {
+            const QString candidate = info.dir().filePath(
+                QStringLiteral("%1 (%2).%3").arg(info.completeBaseName())
+                                            .arg(n)
+                                            .arg(info.suffix()));
+            if (!QFile::exists(candidate)) {
+                finalPath = candidate;
+                break;
+            }
+        }
+    }
+
+    if (!part.rename(finalPath)) {
+        part.remove();
+        if (outError)
+            *outError = tr("The verified download could not be moved into place.");
+        return false;
+    }
+
+    if (outPath)
+        *outPath = finalPath;
+    return true;
 }
 
 void UpdateChecker::cancelDownload()
 {
-    if (m_reply) {
-        m_reply->abort();
-        m_reply->deleteLater();
-        m_reply = nullptr;
+    // Detach before aborting. QNetworkReply::abort() emits finished()
+    // synchronously, so finishDownload() would otherwise run to completion
+    // inside abort() -- nulling m_reply underneath this function, and emitting
+    // failed("Operation canceled") so a deliberate cancel surfaces to the user
+    // as a download error.
+    if (QNetworkReply *reply = std::exchange(m_reply, nullptr)) {
+        reply->disconnect(this);
+        reply->abort();
+        reply->deleteLater();
     }
-    if (m_sink) {
-        m_sink->close();
-        m_sink->remove();
-        delete m_sink;
-        m_sink = nullptr;
+    if (QFile *sink = std::exchange(m_sink, nullptr)) {
+        sink->close();
+        sink->remove();
+        delete sink;
     }
     if (m_downloading) {
         m_downloading = false;
