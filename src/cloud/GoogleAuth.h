@@ -4,6 +4,7 @@
 #include <QString>
 
 class QTcpServer;
+class QTimer;
 class QNetworkAccessManager;
 
 namespace lumen {
@@ -51,6 +52,11 @@ public:
     Q_INVOKABLE void signIn();
     Q_INVOKABLE void signOut();
 
+    // Abandons a sign-in in progress: closes the loopback listener and clears
+    // the busy flag. Without a way out, closing the consent tab left the port
+    // bound and busy stuck true for the rest of the process.
+    Q_INVOKABLE void cancel();
+
 signals:
     void configuredChanged();
     void signedInChanged();
@@ -66,6 +72,9 @@ private:
     void clearRefreshToken();
 
     void startLoopbackServer();
+
+    // Closes and destroys the listener and its timeout, if either exists.
+    void stopLoopbackServer();
     void exchangeCode(const QString &code, quint16 port);
     void refreshAccessToken();
     void fetchAccountEmail();
@@ -87,7 +96,13 @@ private:
     // Regenerated for every sign-in; never stored.
     QString m_codeVerifier;
 
+    // Correlation value for the redirect. PKCE is what protects the token;
+    // this is what stops an unrelated request to 127.0.0.1 from aborting a
+    // sign-in that is in progress.
+    QString m_state;
+
     QTcpServer *m_loopback = nullptr;
+    QTimer *m_authTimeout = nullptr;
     bool m_busy = false;
 };
 

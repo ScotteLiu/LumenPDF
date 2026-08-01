@@ -13,6 +13,7 @@
 #include <QRandomGenerator>
 #include <QStandardPaths>
 #include <QTcpServer>
+#include <QTimer>
 #include <QTcpSocket>
 #include <QUrl>
 #include <QUrlQuery>
@@ -220,7 +221,40 @@ void GoogleAuth::signIn()
 
     setBusy(true);
     m_codeVerifier = randomUrlSafe(48);
+
+    // A correlation value the redirect must echo back. PKCE already makes a
+    // stolen code useless, so this is not what stops a token being taken --
+    // what it stops is any local process, or any web page that can reach
+    // 127.0.0.1, sending a bogus code or an error to a sign-in it did not
+    // start. Required by RFC 8252 and the OAuth 2.0 Security BCP regardless.
+    m_state = randomUrlSafe(24);
+
     startLoopbackServer();
+}
+
+void GoogleAuth::cancel()
+{
+    if (!m_busy)
+        return;
+
+    stopLoopbackServer();
+    m_state.clear();
+    setBusy(false);
+    emit failed(tr("Sign-in was cancelled."));
+}
+
+void GoogleAuth::stopLoopbackServer()
+{
+    if (m_authTimeout) {
+        m_authTimeout->stop();
+        m_authTimeout->deleteLater();
+        m_authTimeout = nullptr;
+    }
+    if (m_loopback) {
+        m_loopback->close();
+        m_loopback->deleteLater();
+        m_loopback = nullptr;
+    }
 }
 
 void GoogleAuth::startLoopbackServer()
@@ -252,11 +286,25 @@ void GoogleAuth::startLoopbackServer()
             const QUrlQuery query(QUrl(target).query());
             const QString code = query.queryItemValue(QStringLiteral("code"));
             const QString error = query.queryItemValue(QStringLiteral("error"));
+            const QString state = query.queryItemValue(QStringLiteral("state"));
+
+            // Anything that does not echo the state this sign-in issued is not
+            // the redirect we are waiting for. Answered and dropped *without*
+            // closing the listener -- closing it is what would let a stray
+            // request from any local process kill the real sign-in, since the
+            // genuine redirect would then hit a refused connection.
+            if (m_state.isEmpty() || state != m_state) {
+                qCWarning(lcAuth) << "ignoring loopback request with unexpected state";
+                socket->write(completionPage(false));
+                socket->disconnectFromHost();
+                return;
+            }
 
             socket->write(completionPage(!code.isEmpty()));
             socket->disconnectFromHost();
 
-            m_loopback->close();
+            m_state.clear();
+            stopLoopbackServer();
 
             if (!code.isEmpty()) {
                 exchangeCode(code, port);
@@ -277,6 +325,7 @@ void GoogleAuth::startLoopbackServer()
     query.addQueryItem(QStringLiteral("scope"), QString::fromLatin1(kScope));
     query.addQueryItem(QStringLiteral("code_challenge"), s256Challenge(m_codeVerifier));
     query.addQueryItem(QStringLiteral("code_challenge_method"), QStringLiteral("S256"));
+    query.addQueryItem(QStringLiteral("state"), m_state);
     // Without these Google returns no refresh token on repeat sign-ins, and the
     // user would have to authorise again every hour.
     query.addQueryItem(QStringLiteral("access_type"), QStringLiteral("offline"));
@@ -284,6 +333,25 @@ void GoogleAuth::startLoopbackServer()
 
     QUrl url(QString::fromLatin1(kAuthEndpoint));
     url.setQuery(query);
+
+    // Nothing else ever ends a sign-in that the user abandons. Close the
+    // consent tab without this and the port stays bound and m_busy stays true
+    // for the rest of the process, so signIn() early-returns forever -- Drive
+    // is dead until restart, with no error and nothing to click.
+    const int timeoutMs = qEnvironmentVariableIsSet("LUMEN_OAUTH_TIMEOUT_MS")
+                              ? qEnvironmentVariableIntValue("LUMEN_OAUTH_TIMEOUT_MS")
+                              : 3 * 60 * 1000;
+
+    m_authTimeout = new QTimer(this);
+    m_authTimeout->setSingleShot(true);
+    connect(m_authTimeout, &QTimer::timeout, this, [this] {
+        qCInfo(lcAuth) << "sign-in timed out; releasing the loopback listener";
+        stopLoopbackServer();
+        m_state.clear();
+        setBusy(false);
+        emit failed(tr("Sign-in timed out. Try again."));
+    });
+    m_authTimeout->start(timeoutMs);
 
     // The user's own browser, where they can see the address bar and Google's
     // real certificate.
@@ -417,6 +485,13 @@ void GoogleAuth::refreshAccessToken()
 
 void GoogleAuth::signOut()
 {
+    // Signing out during a sign-in has to release it too, or m_busy stays true
+    // and the next signIn() early-returns.
+    stopLoopbackServer();
+    m_state.clear();
+    m_codeVerifier.clear();
+    setBusy(false);
+
     m_refreshToken.clear();
     m_accessToken.clear();
     m_accessTokenExpiry = 0;
