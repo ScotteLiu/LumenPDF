@@ -5,7 +5,7 @@ project(LumenPDF
     # that does not match it -- v0.2.0 shipped a binary that reported 0.1.0,
     # which the update checker would have read as "an update is available"
     # forever.
-    VERSION 0.3.0
+    VERSION 0.3.1
     DESCRIPTION "A fast, elegant PDF viewer and editor"
     LANGUAGES CXX
 )
