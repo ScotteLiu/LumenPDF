@@ -189,13 +189,17 @@ int main(int argc, char *argv[])
     controller->setImageProvider(provider);
 
     auto *platform = new lumen::PlatformWindow(&engine);
+    lumen::Timing::instance().mark("engine-created");
     auto *settings = new lumen::Settings(&engine);
+    lumen::Timing::instance().mark("settings-read");
     installTranslations(app, settings->language());
+    lumen::Timing::instance().mark("translations-loaded");
 
     // The update checker shares the controller's network stack rather than
     // opening a second one; it is idle unless someone asks it to check.
     auto *network = new QNetworkAccessManager(&engine);
     auto *updates = new lumen::UpdateChecker(network, &engine);
+    lumen::Timing::instance().mark("updates-created");
     QObject::connect(updates, &lumen::UpdateChecker::quitRequested,
                      &app, &QCoreApplication::quit, Qt::QueuedConnection);
 
@@ -233,6 +237,7 @@ int main(int argc, char *argv[])
                      &app, []() { QCoreApplication::exit(-1); },
                      Qt::QueuedConnection);
 
+    lumen::Timing::instance().mark("before-qml-load");
     engine.loadFromModule("App", "Main");
     lumen::Timing::instance().mark("qml-loaded");
 

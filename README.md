@@ -118,9 +118,9 @@ they are actually drawn.
 
 | | 3-page document | 1000-page document |
 |---|---|---|
-| First page on screen | **287 ms** | **451 ms** |
-| Whole process lifetime | 536 ms | **527 ms** |
-| Memory | 132 MB | 145 MB |
+| First page on screen | 526 ms | 766 ms |
+| Whole process lifetime | 528 ms | 533 ms |
+| Memory | 210 MB | 211 MB |
 | Scrolling, 1000 pages | — | **144 fps** (vsync-locked; no dropped frames) |
 
 Opening a 1000-page document costs the same as opening a 3-page one. That is
@@ -128,7 +128,19 @@ the architectural claim, and it is what the numbers say: page geometry is
 cached once at load and rendering is fully virtualised, so page count does not
 enter the opening cost.
 
-For scale, SumatraPDF reaches input-idle on the same file in 585 ms — but that
+**Time-to-first-page and memory are worse than they were**, and this table used
+to claim 287 ms and 132 MB. Those numbers were real — a build at `eb40424`
+still measures 315 ms and 135 MB on this machine — and the regression arrived
+with `db222a8`, the commit that added printing, links, encrypted documents,
+settings and translations. It is entirely inside `engine.loadFromModule`, and it
+is **not** the printing stack, the settings read, the translators, the update
+checker, or the new sheets being built: each of those was tested and ruled out.
+The investigation, including how to reproduce the bisect, is in
+[docs/OPTIMISATION-PLAN.md](docs/OPTIMISATION-PLAN.md). Publishing the old
+numbers while the shipped build is slower would be the wrong thing to do, so
+these are the measured ones.
+
+For scale, SumatraPDF reaches input-idle on the same file in 248 ms — but that
 is a different measurement, not a like-for-like comparison, and the benchmark
 script says so rather than implying a win.
 

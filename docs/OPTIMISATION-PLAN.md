@@ -1,5 +1,13 @@
 # Optimisation and hardening plan
 
+> **Status, 2026-08-02:** all ten items below are implemented. 107 → 141
+> assertions. One finding did not reproduce and was not shipped as a fix — see
+> the note under item 2.
+>
+> A separate regression was found while measuring and is **still open**; it is
+> written up at the end of this document under "Open: startup regression in
+> db222a8". It was not part of the audit.
+
 The codebase is in good shape. Ten findings survived adversarial verification and none of them is an architectural mistake — the invariants this project paid for are documented in the source and are honoured almost everywhere. `invalidatePage()` tears down both per-page caches correctly; `setTextObjectString` respects the held-form-page rule with its `held` check; `renderPage` enforces the pixel budget; PKCE is implemented properly; `download()` refuses a release with no published checksum. What the audit actually found is a set of omissions at the edges of those rules: six functions that were written before the form-page cache existed and never learned about it, a save path that does not blur the field first, a redaction loop that reports pages it did not touch, and a hover handler that reaches into PDFium from the GUI thread. Two coverage gaps and three update/OAuth defects round it out. Verification downgraded four of the ten — the claimed use-after-free, the arbitrary-file-delete, the Drive account takeover and the null-`deleteLater` crash do not occur — so this is a hardening pass, not an incident.
 
 Start with items 1 and 2. They are both one-line-scale changes in `PdfDocument`, they are the only two findings that lose user data silently, and they share a cause: the form-fill environment holds a page for the session and five renumbering operations plus the save path forgot about it. Item 2 in particular means a plain Ctrl+S after typing into a field writes the pre-edit value while the screen still shows the typed text — invisible until reopen. After those, do the LUMEN_PAGEOP step-splitting harness change (item 7's plumbing), because items 1 and 3 both need it to be testable, then work down.
@@ -128,3 +136,87 @@ The whole undo coverage is `Assert-Equal 3 $r.report.pageCount` over `rotate,1,1
 6. **Item 6 is independent** of all of the above and can land whenever.
 7. **Item 9 last**, folded into item 8's refactor so it can be covered rather than merely reasoned about.
 8. **Finish the rest of item 7** — the rotate-width and `delete;undo;redo;undo` assertions — once the plumbing from (2) is in. It is the only item with no production code change, so it is the safe one to slip if the week runs short.
+---
+
+## Open: startup regression in db222a8
+
+Not from the audit. Found while measuring, and **not yet fixed** — I ruled out
+four hypotheses and ran out of road. Written down so the next attempt starts
+from evidence instead of repeating mine.
+
+### What is established
+
+Same machine, back-to-back, `scripts/benchmark.ps1` (5 runs, median), a git
+worktree at each commit:
+
+| | `eb40424` (before) | `db222a8` (after) |
+|---|---|---|
+| First page, 3 pages | **315 ms** | 542 ms |
+| First page, 1000 pages | **547 ms** | 784 ms |
+| Memory, 3 pages | **135 MB** | 204 MB |
+| Memory, 1000 pages | **148 MB** | 215 MB |
+
+`db222a8` is "Add printing, links, encrypted documents, settings, translations
+and CI". Its parent is clean, so the cause is inside that one commit. Whole
+process lifetime is *unchanged* (527 ms then, 528 ms now) — only time-to-first-
+page and resident memory moved.
+
+The startup marks in `main.cpp` localise it precisely. On current HEAD:
+
+```
+  font-resolved           16 ms   +16
+  engine-created          22 ms   +6
+  settings-read           22 ms   +0
+  translations-loaded     22 ms   +0
+  updates-created         22 ms   +0
+  before-qml-load         22 ms   +0
+  qml-loaded             389 ms   +367     <- all of it is here
+  first-page-visible     584 ms   +195
+```
+
+**The entire cost is inside `engine.loadFromModule("App", "Main")`.**
+
+### What has been ruled out
+
+Each of these was tested by building and measuring, not by reasoning:
+
+- **`Qt6PrintSupport` pulling in `Qt6Widgets`.** Real — linking PrintSupport
+  does map 6.6 MB of DLLs, which is why the print sheet was built in QML in the
+  first place, and linking it gave the dependency back anyway. Both are now
+  delay-loaded and verified absent from the process at idle
+  (`startup-does-not-load-printing` asserts it). It changed the number by
+  ~20 ms and nothing at all in memory. **Not the cause.**
+- **`QSettings`, the translators, and `UpdateChecker`.** 0 ms combined, per the
+  marks above. **Not the cause.**
+- **The new sheets being instantiated at startup.** Removing `PrintSheet`,
+  `PasswordSheet`, `SettingsSheet` and `UpdateBanner` from `Main.qml` entirely
+  recovers 23 ms of the 367. `PrintSheet` and `SettingsSheet` are Loader-gated
+  now regardless, which is right on its own merits. **Not the cause.**
+- **`Document.linkCount()` on the page delegate.** Replacing it with a constant
+  changed 526 ms to 521 ms. **Not the cause.**
+
+### Where to look next
+
+Untested, in the order I would try them:
+
+1. **`width: Prefs.windowSize.width` / `visibility: Prefs.windowMaximized ? …`
+   in `Main.qml`.** The window used to be a fixed 1280×840; it is now sized from
+   a property read at creation, and `visibility` is bound too. If that triggers
+   a window-state change or a resize after the surface exists, the swapchain is
+   recreated — which would explain the memory as well as the time, and nothing
+   else on this list explains the memory at all.
+2. `PageView.qml`'s changes in the same commit, beyond `linkCount`.
+3. Whether `qt_add_translations`' resource affects QML module load.
+
+### How to measure it
+
+Do not benchmark while anything else is running on the machine. The first
+measurement in this investigation was taken while a 13-agent workflow was
+compiling, and it produced a 1528 ms outlier for a run that measured 538 ms
+minutes later — which sent me after the wrong cause twice.
+
+```powershell
+git worktree add ..\lumen-before <commit>
+Copy-Item third_party\pdfium ..\lumen-before\third_party\pdfium -Recurse
+cd ..\lumen-before ; ./scripts/build.ps1 ; ./scripts/benchmark.ps1
+```

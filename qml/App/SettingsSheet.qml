@@ -31,7 +31,14 @@ Item {
 
     signal toastRequested(string message)
 
+        // Nothing below is built until this panel is first opened. It is invisible
+    // at startup, and constructing its whole tree there was costing time on the
+    // path to the first rendered page -- which is the number this product is
+    // judged on.
+    property bool everOpened: false
+
     function open() {
+        root.everOpened = true;
         root.state = "open";
         root.forceActiveFocus();
     }
@@ -49,6 +56,17 @@ Item {
     }
 
     Keys.onEscapePressed: root.close()
+
+    Loader {
+        anchors.fill: parent
+        active: root.everOpened
+        sourceComponent: sheetBody
+    }
+
+    Component {
+        id: sheetBody
+    Item {
+        anchors.fill: parent
 
     Rectangle {
         anchors.fill: parent
@@ -309,4 +327,7 @@ Item {
             root.toastRequested(qsTr("Settings reset"));
         }
     }
+
+    }   // Item, the body wrapped by the Loader
+    }   // Component: sheetBody
 }
