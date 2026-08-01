@@ -17,6 +17,12 @@ namespace lumen {
 // the assertions expect.
 namespace fixtures {
 
+// Two A1 pages. Redaction rasterises at 300 dpi and the render path refuses
+// anything over 40 megapixels, so these cannot be flattened -- the fixture
+// exists to prove that refusal is reported rather than silently counted as
+// success.
+bool writeOversizeSample(const QString &filePath);
+
 // Multi-page Latin text with known, countable phrases.
 bool writeLatinSample(const QString &filePath);
 

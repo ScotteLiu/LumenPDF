@@ -54,6 +54,46 @@ QString findCjkFont()
 
 } // namespace
 
+bool writeOversizeSample(const QString &filePath)
+{
+    // Two A1 pages. Redaction rasterises at 300 dpi, and the render path
+    // refuses anything over 40 megapixels, so A1 at 300 dpi (~23.4 x 33.1 in,
+    // roughly 70 megapixels) cannot be flattened.
+    //
+    // That refusal is correct -- the budget exists because a crafted page once
+    // forced a 268 MB raster -- so the fixture exists to prove the refusal is
+    // *reported*, not to make it go away. Plotter output, posters and
+    // engineering drawings are all this size in real life.
+    QScopedPointer<QPdfWriter> writer(new QPdfWriter(filePath));
+    writer->setPageSize(QPageSize(QPageSize::A1));
+    writer->setResolution(72);
+    writer->setCreator(QStringLiteral("LumenPDF fixtures"));
+
+    QPainter painter(writer.data());
+    if (!painter.isActive())
+        return false;
+
+    QFont body(QStringLiteral("Arial"), 24);
+    QFont heading(QStringLiteral("Arial"), 48, QFont::Bold);
+
+    for (int page = 0; page < 2; ++page) {
+        if (page > 0)
+            writer->newPage();
+
+        painter.setFont(heading);
+        painter.drawText(QRect(120, 120, 1600, 100), Qt::AlignLeft,
+                         QStringLiteral("Oversize fixture page %1").arg(page + 1));
+
+        painter.setFont(body);
+        painter.drawText(QRect(120, 280, 1600, 300), Qt::TextWordWrap,
+                         QStringLiteral("This page is A1. Redaction cannot flatten it, "
+                                        "and must say so rather than reporting success."));
+    }
+
+    painter.end();
+    return QFileInfo::exists(filePath);
+}
+
 bool writeLatinSample(const QString &filePath)
 {
     QScopedPointer<QPdfWriter> writer(makeWriter(filePath));
@@ -417,6 +457,8 @@ int writeAll(const QString &directory, bool includeLarge)
 
     int written = 0;
     if (writeLatinSample(dir.filePath(QStringLiteral("latin-sample.pdf"))))
+        ++written;
+    if (writeOversizeSample(dir.filePath(QStringLiteral("oversize-sample.pdf"))))
         ++written;
     if (writeCjkSample(dir.filePath(QStringLiteral("cjk-sample.pdf"))))
         ++written;

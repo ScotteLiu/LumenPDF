@@ -573,6 +573,69 @@ if (Start-Case "hostile-input") {
         "no hostile file pushes memory past 250 MB (peak ${peakMemory} MB)"
 }
 
+# -- Redaction across pages -------------------------------------------------
+#
+# Until LUMEN_SELECT grew a cross-page form, no test could produce a selection
+# spanning two pages, so SelectionController's cross-page branches and the whole
+# multi-page redaction loop were unreachable from the suite. The controller
+# reported `last - first + 1` pages flattened whether or not it had touched
+# them -- after a dialog promising nothing was recoverable.
+
+if (Start-Case "redact-across-pages") {
+    $target = Join-Path $scratch "redact-cross.pdf"
+    Copy-Item $latin $target -Force
+
+    Invoke-Lumen -Pdf $target -Name "redact-cross" -Hooks @{
+        LUMEN_SELECT   = "0,72,130,1,500,400"
+        LUMEN_ANNOTATE = "redact"
+        LUMEN_SAVE_AS  = $target
+    } | Out-Null
+
+    $r = Invoke-Lumen -Pdf $target -Name "redact-cross-read"
+    if ($r.ok) {
+        Assert-Equal 0 $r.report.pageTextLengths[0] "page 1 text is destroyed"
+        Assert-Equal 0 $r.report.pageTextLengths[1] "page 2 text is destroyed"
+        # The clause that stops an over-broad regression from passing.
+        Assert-True ($r.report.pageTextLengths[2] -gt 100) "page 3 is untouched"
+    } else {
+        Assert-True $false "redact-cross reopened ($($r.reason))"
+    }
+}
+
+if (Start-Case "redact-reports-only-pages-it-flattened") {
+    # An A1 page cannot be flattened: redaction rasterises at 300 dpi and the
+    # render path refuses anything over 40 megapixels. That refusal is correct.
+    # What was wrong was reporting it as a success.
+    $oversize = Join-Path $fixtureDir "oversize-sample.pdf"
+    if (-not (Test-Path $oversize)) {
+        Assert-True $false "the oversize fixture was generated"
+    } else {
+        $target = Join-Path $scratch "redact-oversize.pdf"
+        Copy-Item $oversize $target -Force
+
+        $logPath = Join-Path $scratch "redact-oversize.log"
+        foreach ($n in $hookNames) { Remove-Item "Env:$n" -ErrorAction SilentlyContinue }
+        $env:LUMEN_SELECT = "0,150,300,1,900,500"
+        $env:LUMEN_ANNOTATE = "redact"
+        $env:LUMEN_SAVE_AS = $target
+        $env:LUMEN_REPORT = Join-Path $scratch "redact-oversize.json"
+        Start-Process $exe -ArgumentList $target -Wait -RedirectStandardError $logPath | Out-Null
+        foreach ($n in $hookNames) { Remove-Item "Env:$n" -ErrorAction SilentlyContinue }
+
+        $log = Get-Content $logPath -Raw
+        Assert-True ($log -match "redact-failed:") `
+            "a page that cannot be flattened is reported as a failure"
+        Assert-True (-not ($log -match "redact-flattened: 2")) `
+            "and is not counted among the pages flattened"
+
+        $r = Invoke-Lumen -Pdf $target -Name "redact-oversize-read"
+        if ($r.ok) {
+            Assert-True ($r.report.pageTextLengths[0] -gt 20) `
+                "the text it could not redact is still there, as the warning says"
+        }
+    }
+}
+
 # -- Links ------------------------------------------------------------------
 #
 # The fixture carries four link annotations. Only three are followable: the

@@ -293,20 +293,41 @@ int main(int argc, char *argv[])
 
     // Test hook: drive a drag-selection from the environment, as
     // "page,x1,y1,x2,y2" in PDF points with a top-left origin.
+    // Three forms:
+    //   "page,x1,y1,x2,y2"           a drag within one page
+    //   "p1,x1,y1,p2,x2,y2"          a drag across pages -- without this, no
+    //                                test could ever produce a multi-page
+    //                                selection, and the cross-page branches of
+    //                                SelectionController were unreachable
+    //   "all"                        select the whole document
     if (qEnvironmentVariableIsSet("LUMEN_SELECT")) {
-        const QStringList parts = qEnvironmentVariable("LUMEN_SELECT").split(u',');
-        if (parts.size() == 5) {
+        const QString spec = qEnvironmentVariable("LUMEN_SELECT");
+        const QStringList parts = spec.split(u',');
+        if (spec == QLatin1String("all") || parts.size() == 5 || parts.size() == 6) {
             QObject::connect(controller, &lumen::DocumentController::documentChanged,
-                             controller, [controller, parts] {
+                             controller, [controller, spec, parts] {
                                  if (controller->pageCount() <= 0)
                                      return;
                                  auto *selection = controller->selection();
-                                 const int page = parts.at(0).toInt();
-                                 selection->begin(page, QPointF(parts.at(1).toDouble(),
-                                                                parts.at(2).toDouble()));
-                                 selection->extend(page, QPointF(parts.at(3).toDouble(),
-                                                                 parts.at(4).toDouble()));
-                                 selection->end();
+
+                                 if (spec == QLatin1String("all")) {
+                                     selection->selectAll();
+                                 } else if (parts.size() == 6) {
+                                     selection->begin(parts.at(0).toInt(),
+                                                      QPointF(parts.at(1).toDouble(),
+                                                              parts.at(2).toDouble()));
+                                     selection->extend(parts.at(3).toInt(),
+                                                       QPointF(parts.at(4).toDouble(),
+                                                               parts.at(5).toDouble()));
+                                     selection->end();
+                                 } else {
+                                     const int page = parts.at(0).toInt();
+                                     selection->begin(page, QPointF(parts.at(1).toDouble(),
+                                                                    parts.at(2).toDouble()));
+                                     selection->extend(page, QPointF(parts.at(3).toDouble(),
+                                                                     parts.at(4).toDouble()));
+                                     selection->end();
+                                 }
 
                                  // Optional follow-on actions, so a single run
                                  // can exercise select -> annotate -> save.
@@ -321,7 +342,22 @@ int main(int argc, char *argv[])
                                      controller->annotate()->applyToSelection(
                                          lumen::AnnotationController::StrikeOut);
                                  else if (action == QLatin1String("redact"))
+                                 {
+                                     // A partial redaction reports success and
+                                     // a failure; the test needs to see both.
+                                     QObject::connect(controller->redact(),
+                                                      &lumen::RedactionController::failed,
+                                                      qApp, [](const QString &reason) {
+                                                          qWarning("redact-failed: %s",
+                                                                   qPrintable(reason));
+                                                      });
+                                     QObject::connect(controller->redact(),
+                                                      &lumen::RedactionController::flattenedPages,
+                                                      qApp, [](int pages) {
+                                                          qInfo("redact-flattened: %d", pages);
+                                                      });
                                      controller->redact()->redactSelection();
+                                 }
 
                                  if (qEnvironmentVariableIsSet("LUMEN_SAVE_AS")) {
                                      controller->saveAs(QUrl::fromLocalFile(
