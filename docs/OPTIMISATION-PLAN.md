@@ -138,96 +138,99 @@ The whole undo coverage is `Assert-Equal 3 $r.report.pageCount` over `rotate,1,1
 8. **Finish the rest of item 7** — the rotate-width and `delete;undo;redo;undo` assertions — once the plumbing from (2) is in. It is the only item with no production code change, so it is the safe one to slip if the week runs short.
 ---
 
-## Startup regression in db222a8 — diagnosed
+## Startup regression in db222a8 — found, and it was a shipped bug
 
-Not from the audit. Found while measuring; **cause identified, fix not yet
-chosen.**
+**Resolved.** It was not a performance problem. Between v0.3.0 and v0.3.1,
+**an English interface was being silently replaced by Simplified Chinese**, and
+the 210 ms was the cost of rendering CJK glyphs nobody had asked for.
 
-### The measurement
+### What happened
 
-Six consecutive runs of each binary, same machine, interleaved, reading
-`first-page-visible` straight out of the state report:
+`QTranslator::load(const QLocale &, ...)` walks the user's preferred UI
+languages and installs the first one it finds a file for. This project ships no
+English `.qm`, because English is the source language — so English was never
+"found", and the chain simply carried on to the next preference.
+
+On this machine Windows reports:
 
 ```
-  eb40424    298, 280, 292, 284, 286, 288      -> ~287 ms
-  HEAD       513, 520, 524, 513, 513, 509      -> ~515 ms
+en-Latn-US, en-US, en-Latn, en, zh-Hans-CN, zh-CN, zh-Hans, zh
 ```
 
-Tight distributions, no overlap. Memory moved with it: 135 MB -> 210 MB.
+An English speaker who also has Chinese installed got a Chinese interface. Qt
+was doing exactly what it documents; the assumption that English needs no entry
+in the fallback chain was wrong.
 
-Two measurement traps caught me first, both worth knowing:
+### How it was found, and how long that took
 
-- **Do not benchmark while anything else runs.** The first measurement was taken
-  while a 13-agent workflow was compiling and produced a 1528 ms outlier for a
-  run that measured 538 ms minutes later.
-- **The first run after a build is cold and means nothing.** A single run of
-  either binary reports ~518 ms. `benchmark.ps1` takes a median of five for
-  exactly this reason; a one-shot comparison had me briefly convinced there was
-  no regression at all.
+Badly, and too long — six wrong hypotheses, each disproved by building and
+measuring:
 
-### The cause
+| Hypothesis | Verdict |
+|---|---|
+| `Qt6PrintSupport` pulling in `Qt6Widgets` | Real, but worth ~20 ms and no memory |
+| `QSettings`, `UpdateChecker` | 0 ms combined |
+| The new sheets being instantiated | 23 ms of 367 |
+| `Document.linkCount()` on the delegate | 5 ms |
+| The `visibility` / window-size bindings | 0 ms |
+| A slow lookup in our `.qm` | No — a 3-message file cost the same as a 226-message one |
 
-**Installing our own `QTranslator`.** Commenting out one line —
-`installTranslations(app, settings->language())` — takes HEAD from ~515 ms to
-~305 ms. That is 210 of the 228 ms.
+The step that actually cracked it was comparing an **empty installed
+translator** (fast) against a real one (slow), then a translation file with the
+same 226 messages **written in Latin instead of Chinese** — 295 ms vs 515 ms.
+That isolated the cost to rendering the script, not to translation. Printing
+which file had been chosen took one line and should have been the first thing
+done, not the last.
 
-The cost is in Qt's translation path during QML instantiation, not in loading
-the file:
+### The fix
 
-- `translations-loaded` is **0 ms** on the startup marks; the `.qm` load itself
-  is free.
-- Qt's own `qtbase_<locale>.qm` is **not** the cost — removing it changes
-  nothing, because it does not exist in this Qt install and never loads.
-- It is **not** the compressed resource. Loading the identical `.qm` from the
-  filesystem instead of `:/i18n` measures the same ~515 ms.
-- The `.qm` files are normal: 19–22 KB, 226 messages, nothing malformed.
+Resolve the file ourselves instead of handing the locale to Qt:
 
-So it is the per-`qsTr` path through `QCoreApplication::translate` once any
-translator is installed, multiplied by every translatable binding in the tree
-built at startup. Roughly 0.9 ms per string, which is high enough that the
-mechanism is worth understanding before choosing a fix.
+- Walk `uiLanguages()` in order, and treat **English as always available** —
+  reaching it means the user prefers English to anything further down, so
+  install nothing.
+- Try the full tag, then the tag without the script subtag, then the bare
+  language. `uiLanguages()` yields `zh-Hans-CN`, so without the middle step
+  `zh_CN` never matched the file named for it.
+- An **explicit** choice in Settings bypasses the English rule. Following the
+  system means honouring the system's ordering; choosing a language in
+  Preferences means that language.
 
-### Also ruled out, each by building and measuring
+Also: an explicit CJK fallback family on the UI font, and a glyph-cache warm-up
+on a worker thread when the interface is in a script the primary font cannot
+draw. Together those take a genuinely-Chinese interface from 515 ms to ~440 ms.
 
-- `Qt6PrintSupport` pulling in `Qt6Widgets` — real, and both are delay-loaded
-  now and verified absent from the process at idle
-  (`startup-does-not-load-printing` asserts it). Worth ~20 ms, no memory.
-- `QSettings`, `UpdateChecker` — 0 ms combined, per the startup marks.
-- The new sheets being instantiated — removing all four recovers 23 ms of 367.
-  `PrintSheet` and `SettingsSheet` are Loader-gated regardless.
-- `Document.linkCount()` on the page delegate — 5 ms.
-- The `visibility` binding and `Prefs`-driven window size in `Main.qml` — 0 ms.
+### Result
 
-### What to do about it
+| | Before | After |
+|---|---|---|
+| First page, English UI | 515 ms | **305 ms** |
+| Memory | 210 MB | **150 MB** |
+| First page, Chinese UI | 515 ms | 440 ms |
 
-Not decided, and it is a genuine trade-off rather than a bug to squash:
+`eb40424`, before any of this work, was 287 ms and 135 MB.
 
-1. **Reduce translatable bindings built at startup.** Gating the four sheets was
-   worth 23 ms, so this scales but slowly — most of the 226 strings are in the
-   toolbar, sidebar and page view, which cannot be deferred.
-2. **Understand the 0.9 ms.** That number is high enough to suggest something
-   specific is wrong rather than translation simply being expensive. This is the
-   next thing to look at, and it needs a QML profiler rather than more bisecting.
-3. **Accept it.** 515 ms is not slow in absolute terms, and shipping in four
-   languages is worth more than 210 ms to the people who need it.
+### The guard
 
-The memory half (+75 MB) is **not** explained by any of this. A 19 KB `.qm`
-does not account for it, and no experiment above moved it.
+`language-resolution` in the suite asserts five cases, including the one that
+was broken: following the system, English outranks a lower-ranked language we
+do ship. `LUMEN_LANGUAGE` drives an explicit preference without touching the
+registry, and `activeTranslation` in the state report is what makes the choice
+visible at all — the original bug was invisible from inside the application.
 
+### Two benchmarking traps, both of which produced wrong conclusions
 
+- **Never benchmark while anything else runs.** A 13-agent workflow compiling in
+  the background produced a 1528 ms outlier for a run that measured 538 ms
+  minutes later.
+- **The first run after a build is cold** and reports ~518 ms for *any* build. A
+  one-shot comparison briefly "disproved" a regression that was entirely real.
+  Use `benchmark.ps1` (median of five) or discard the first run.
 
-Not from the audit. Found while measuring, and **not yet fixed** — I ruled out
-four hypotheses and ran out of road. Written down so the next attempt starts
-from evidence instead of repeating mine.
-
-### Appendix: reproducing the bisect
+### Reproducing the bisect
 
 ```powershell
 git worktree add ..\lumen-before <commit>
 Copy-Item third_party\pdfium ..\lumen-before	hird_party\pdfium -Recurse
 cd ..\lumen-before ; ./scripts/build.ps1 ; ./scripts/benchmark.ps1
 ```
-
-Or, for a single figure without the benchmark harness, run the binary five or
-six times with `LUMEN_REPORT` set and read `timingsMs.first-page-visible` --
-discarding the first run.

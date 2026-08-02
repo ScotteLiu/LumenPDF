@@ -18,17 +18,23 @@
 #include "platform/PlatformWindow.h"
 #include "render/PageImageProvider.h"
 
+#include <QFile>
+#include <QLoggingCategory>
 #include <QGuiApplication>
 #include <QIcon>
 #include <QLibraryInfo>
 #include <QLocale>
+#include <QFontMetricsF>
 #include <QNetworkAccessManager>
+#include <QtConcurrent/QtConcurrentRun>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QTimer>
 #include <QTranslator>
+
+Q_LOGGING_CATEGORY(lcI18n, "lumen.i18n")
 
 namespace {
 
@@ -46,16 +52,90 @@ void installTranslations(QCoreApplication &app, const QString &preferred)
     const QLocale locale = preferred.isEmpty() ? QLocale::system() : QLocale(preferred);
 
     auto *qtTranslator = new QTranslator(&app);
-    if (qtTranslator->load(locale, QStringLiteral("qtbase"), QStringLiteral("_"),
-                           QLibraryInfo::path(QLibraryInfo::TranslationsPath))) {
+    const bool qtOk = qtTranslator->load(locale, QStringLiteral("qtbase"), QStringLiteral("_"),
+                           QLibraryInfo::path(QLibraryInfo::TranslationsPath));
+    if (qtOk) {
         app.installTranslator(qtTranslator);
     }
 
     auto *appTranslator = new QTranslator(&app);
-    if (appTranslator->load(locale, QStringLiteral("lumenpdf"), QStringLiteral("_"),
-                            QStringLiteral(":/i18n"))) {
+
+    // Resolve the file ourselves rather than handing the locale to
+    // QTranslator::load().
+    //
+    // That overload does not stop at "no translation for this locale". When it
+    // cannot match, it keeps relaxing until it matches *something* with the
+    // right base name -- so on an en_US system it loaded lumenpdf_zh_CN.qm and
+    // gave an English speaker a Simplified Chinese interface. Shipped that way
+    // in v0.3.1. It also cost ~210 ms of startup, because the interface was
+    // then rendering CJK glyphs nobody asked for, which is how it was found.
+    //
+    // Exact matches only: the language must be one we actually ship.
+    // An explicit choice in Settings is a choice, and English must not be able
+    // to outrank it. Following the system is different: there the user's own
+    // ordered preference list is the answer, English included.
+    const bool explicitChoice = !preferred.isEmpty();
+
+    QString chosen;
+    for (const QString &tag : locale.uiLanguages()) {
+        // uiLanguages() yields BCP 47 ("zh-Hant-TW"); our files use Qt's
+        // underscore form ("zh_TW").
+        const QString normalised = QString(tag).replace(QLatin1Char('-'), QLatin1Char('_'));
+        const QStringList parts = normalised.split(QLatin1Char('_'));
+
+        // Try, in order: the whole tag, the tag with the script dropped, then
+        // the bare language. uiLanguages() hands back script-tagged forms --
+        // "zh-Hans-CN", not "zh-CN" -- so without the middle step zh_CN never
+        // matched the file that is literally named for it.
+        QStringList attempts { normalised };
+        if (parts.size() == 3)
+            attempts << parts.at(0) + QLatin1Char('_') + parts.at(2);
+        if (parts.size() >= 2)
+            attempts << parts.at(0);
+
+        bool decided = false;
+        for (const QString &candidate : attempts) {
+            // English is the source language, so it is always available even
+            // though no .qm exists for it. Reaching it means the user prefers
+            // English over anything further down their list, and the right
+            // answer is to install nothing.
+            //
+            // Without this the chain simply skipped past English -- and this
+            // machine's list is
+            //   en-US, en-Latn, en, zh-Hans-CN, zh-CN, zh-Hans, zh
+            // so an English speaker who also has Chinese installed got a
+            // Simplified Chinese interface. Shipped that way in v0.3.1.
+            if (!explicitChoice
+                && (candidate == QLatin1String("en")
+                    || candidate.startsWith(QLatin1String("en_")))) {
+                decided = true;
+                break;
+            }
+
+            const QString path = QStringLiteral(":/i18n/lumenpdf_%1.qm").arg(candidate);
+            if (QFile::exists(path)) {
+                chosen = path;
+                decided = true;
+                break;
+            }
+
+        }
+        if (decided)
+            break;
+    }
+
+    const bool appOk = !chosen.isEmpty() && appTranslator->load(chosen);
+    if (appOk) {
         app.installTranslator(appTranslator);
     }
+
+    // Published so the suite can assert which language was chosen. The bug
+    // this guards against was invisible from inside the application.
+    lumen::PlatformWindow::setActiveTranslation(appOk ? chosen : QString());
+
+    qCInfo(lcI18n, "locale=%s qtbase=%d lumenpdf=%s",
+           qPrintable(locale.name()), qtOk ? 1 : 0,
+           appOk ? qPrintable(chosen) : "none (interface stays English)");
 }
 
 // UI capture mode, used for screenshot review and visual regression checks.
@@ -170,8 +250,6 @@ int main(int argc, char *argv[])
     lumen::PdfEngine::initialize();
     lumen::Timing::instance().mark("pdfium-initialized");
 
-    QGuiApplication::setFont(lumen::PlatformWindow::preferredUiFont());
-    lumen::Timing::instance().mark("font-resolved");
 
     // Scoped so the engine -- and with it every open document and every
     // worker thread holding one -- is destroyed *before* PDFium is torn down.
@@ -192,8 +270,44 @@ int main(int argc, char *argv[])
     lumen::Timing::instance().mark("engine-created");
     auto *settings = new lumen::Settings(&engine);
     lumen::Timing::instance().mark("settings-read");
-    installTranslations(app, settings->language());
+    // Test hook: override the stored language without touching the registry.
+    const QString languagePreference =
+        qEnvironmentVariableIsSet("LUMEN_LANGUAGE")
+            ? qEnvironmentVariable("LUMEN_LANGUAGE") : settings->language();
+
+    const QLocale uiLocale = languagePreference.isEmpty()
+                                 ? QLocale::system() : QLocale(languagePreference);
+    installTranslations(app, languagePreference);
     lumen::Timing::instance().mark("translations-loaded");
+
+    // After the language is known, not before: the font has to carry a family
+    // that can draw the script the interface is about to be written in.
+    QGuiApplication::setFont(lumen::PlatformWindow::preferredUiFont(uiLocale));
+    lumen::Timing::instance().mark("font-resolved");
+
+    // Warm the glyph cache off the GUI thread.
+    //
+    // A CJK interface costs ~210 ms more to reach the first painted page than a
+    // Latin one -- measured with the identical translation file, Latin text vs
+    // Chinese: 295 ms vs 515 ms. It is not the translation lookup and not the
+    // font *search*; it is loading and rasterising the CJK face itself.
+    //
+    // Touching it on a worker while the QML tree is still being built recovers
+    // about 65 ms of that. Only worth doing when a fallback family was actually
+    // added, i.e. when the interface is in a script the primary font cannot
+    // draw -- a Latin interface would just be doing pointless work.
+    const QFont uiFont = QGuiApplication::font();
+    if (uiFont.families().size() > 1) {
+        QtConcurrent::run([uiFont] {
+            for (int size : { 12, 13, 15, 20 }) {
+                QFont sized = uiFont;
+                sized.setPixelSize(size);
+                // A handful of the characters the interface itself uses.
+                QFontMetricsF(sized).horizontalAdvance(
+                    QStringLiteral("頁面大綱搜尋設定列印"));
+            }
+        });
+    }
 
     // The update checker shares the controller's network stack rather than
     // opening a second one; it is idle unless someone asks it to check.

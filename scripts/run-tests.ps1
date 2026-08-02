@@ -71,7 +71,7 @@ $hookNames = @("LUMEN_SEARCH", "LUMEN_SELECT", "LUMEN_SELECT_WORD", "LUMEN_ANNOT
                "LUMEN_EDIT_TEXT", "LUMEN_BENCH", "LUMEN_OCR",
                "LUMEN_PRINT", "LUMEN_PASSWORD", "LUMEN_LINK_PROBE", "LUMEN_NOTE_PAGE",
                "LUMEN_VERSION_COMPARE", "LUMEN_UPDATE_ASSET", "LUMEN_UPDATE_VERIFY",
-               "LUMEN_HOVER")
+               "LUMEN_HOVER", "LUMEN_LANGUAGE")
 
 $env:QT_FORCE_STDERR_LOGGING = "1"
 $env:LUMEN_CAPTURE_DELAY = "3000"
@@ -906,6 +906,46 @@ if (Start-Case "settings-reading-position") {
 #
 # Compiled .qm files are easy to leave out of a build and impossible to notice
 # missing: the interface simply stays English.
+
+if (Start-Case "language-resolution") {
+    # v0.3.1 shipped with an English interface silently replaced by Simplified
+    # Chinese. QTranslator::load(QLocale, ...) walks the user's preferred UI
+    # languages and takes the first one a file exists for -- and English has no
+    # file, because it is the source language. So on a machine whose Windows
+    # language list is
+    #     en-US, en-Latn, en, zh-Hans-CN, zh-CN, zh-Hans, zh
+    # an English speaker fell straight through to Chinese. Nothing in the
+    # application could see it; the only symptom was 210 ms of startup spent
+    # rendering CJK glyphs nobody asked for.
+    # The system path and the explicit path are different questions.
+    #
+    # Following the system means honouring the user's own ordered preference
+    # list -- which on this machine is en, then zh. "Stay English" is the right
+    # answer there, and the bug was that English was skipped over.
+    $r = Invoke-Lumen -Pdf $latin -Name "lang-system"
+    if ($r.ok) {
+        Assert-Equal "" $r.report.activeTranslation `
+            "following the system, English wins over a lower-ranked language we do ship"
+    }
+
+    # An explicit choice in Settings is a choice, and must not be outranked.
+    $cases = @(
+        @{ lang = "zh_TW"; expect = ":/i18n/lumenpdf_zh_TW.qm";  what = "an explicit zh_TW is honoured" },
+        @{ lang = "zh_CN"; expect = ":/i18n/lumenpdf_zh_CN.qm";  what = "an explicit zh_CN is honoured" },
+        @{ lang = "ja_JP"; expect = ":/i18n/lumenpdf_ja.qm";     what = "ja_JP falls back to the ja file" },
+        @{ lang = "de_DE"; expect = "";                          what = "a language we do not ship stays English" }
+    )
+
+    foreach ($case in $cases) {
+        $r = Invoke-Lumen -Pdf $latin -Name "lang-$($case.lang)" `
+                          -Hooks @{ LUMEN_LANGUAGE = $case.lang }
+        if ($r.ok) {
+            Assert-Equal $case.expect $r.report.activeTranslation $case.what
+        } else {
+            Assert-True $false "$($case.what) ($($r.reason))"
+        }
+    }
+}
 
 if (Start-Case "translations-complete") {
     $tsFiles = Get-ChildItem (Join-Path $repoRoot "translations") -Filter "*.ts"

@@ -16,14 +16,14 @@
                  ],
     "machine":  "STF-Scotte, 143 Hz display",
     "recorded":  "2026-08-02",
-    "commit":  "ff1e5f5",
+    "commit":  "1a340e7",
     "latin":  {
-                  "firstPageMs":  507,
-                  "memoryMb":  206
+                  "firstPageMs":  305,
+                  "memoryMb":  150
               },
     "large":  {
-                  "firstPageMs":  939,
-                  "memoryMb":  208
+                  "firstPageMs":  728,
+                  "memoryMb":  153
               },
     "tolerancePercent":  25
 }

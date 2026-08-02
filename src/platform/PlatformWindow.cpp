@@ -4,6 +4,7 @@
 
 #include <QDir>
 #include <QFontDatabase>
+#include <QLocale>
 #include <QGuiApplication>
 #include <QLoggingCategory>
 #include <QQuickWindow>
@@ -41,7 +42,7 @@ PlatformWindow::PlatformWindow(QObject *parent)
 {
 }
 
-QFont PlatformWindow::preferredUiFont()
+QFont PlatformWindow::preferredUiFont(const QLocale &locale)
 {
     // In preference order. Inter is the design target; the rest are the
     // closest neutral grotesques each platform actually ships.
@@ -62,17 +63,71 @@ QFont PlatformWindow::preferredUiFont()
 #endif
     };
 
+    // The interface font for a script the primary family cannot draw.
+    //
+    // Declaring this matters far more than it looks. "Segoe UI Variable Text"
+    // has no CJK coverage, so with a Chinese or Japanese interface every single
+    // string sends Qt hunting through the font database for something that can
+    // draw it. That search cost 210 ms of startup -- measured: the identical
+    // translation file with Latin text instead of Chinese was 295 ms, with
+    // Chinese 515 ms. Naming the fallback up front means Qt never searches.
+    static const QList<QPair<QString, QStringList>> scriptFallbacks {
+#ifdef Q_OS_WIN
+        { QStringLiteral("zh_TW"), { QStringLiteral("Microsoft JhengHei UI"),
+                                     QStringLiteral("Microsoft JhengHei") } },
+        { QStringLiteral("zh_HK"), { QStringLiteral("Microsoft JhengHei UI"),
+                                     QStringLiteral("Microsoft JhengHei") } },
+        { QStringLiteral("zh_CN"), { QStringLiteral("Microsoft YaHei UI"),
+                                     QStringLiteral("Microsoft YaHei") } },
+        { QStringLiteral("ja"),    { QStringLiteral("Yu Gothic UI"),
+                                     QStringLiteral("Meiryo UI") } },
+        { QStringLiteral("ko"),    { QStringLiteral("Malgun Gothic") } },
+#endif
+    };
+
     const QStringList installed = QFontDatabase::families();
+
+    QString primary;
     for (const QString &candidate : preferences) {
         if (installed.contains(candidate, Qt::CaseInsensitive)) {
-            QFont font(candidate);
-            font.setStyleStrategy(QFont::PreferAntialias);
-            return font;
+            primary = candidate;
+            break;
         }
     }
+    if (primary.isEmpty())
+        return QGuiApplication::font();
 
-    return QGuiApplication::font();
+    QStringList families { primary };
+
+    // Match on the full name first ("zh_TW"), then the language alone ("ja"),
+    // so ja_JP finds the Japanese entry.
+    const QString name = locale.name();
+    const QString language = name.section(QLatin1Char('_'), 0, 0);
+    for (const auto &entry : scriptFallbacks) {
+        const bool matches = entry.first == name
+                             || (!entry.first.contains(QLatin1Char('_'))
+                                 && entry.first == language);
+        if (!matches)
+            continue;
+        for (const QString &fallback : entry.second) {
+            if (installed.contains(fallback, Qt::CaseInsensitive)) {
+                families.append(fallback);
+                break;
+            }
+        }
+        break;
+    }
+
+    QFont font;
+    font.setFamilies(families);
+    font.setStyleStrategy(QFont::PreferAntialias);
+    return font;
 }
+
+namespace { QString s_activeTranslation; }
+
+QString PlatformWindow::activeTranslation() { return s_activeTranslation; }
+void PlatformWindow::setActiveTranslation(const QString &path) { s_activeTranslation = path; }
 
 QString PlatformWindow::uiFontFamily() const
 {

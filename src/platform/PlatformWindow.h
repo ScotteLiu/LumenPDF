@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QFont>
+#include <QLocale>
 #include <QObject>
 
 class QWindow;
@@ -47,7 +48,15 @@ public:
     qreal benchmarkFps() const { return m_benchmarkFps; }
     int benchmarkFrames() const { return m_benchmarkFrames; }
 
-    static QFont preferredUiFont();
+    // The interface font, including an explicit fallback family for the
+    // script `locale` needs. Declaring the fallback rather than letting Qt
+    // search for one is worth 210 ms of startup on a CJK interface.
+    static QFont preferredUiFont(const QLocale &locale);
+
+    // The translation file in effect, or empty when the interface is running
+    // in the source language. Set once at startup.
+    static QString activeTranslation();
+    static void setActiveTranslation(const QString &path);
     QString uiFontFamily() const;
     int initialSidebarTab() const;
     int initialDark() const;

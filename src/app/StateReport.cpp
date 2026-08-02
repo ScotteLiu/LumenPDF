@@ -130,6 +130,7 @@ bool write(const QString &filePath,
     }
 
     root["uiLanguage"] = QLocale().name();
+    root["activeTranslation"] = PlatformWindow::activeTranslation();
 
     // Startup timeline. Reported as absolute milliseconds from the first line
     // of main(), so the phases are directly comparable to each other.

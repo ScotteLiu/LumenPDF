@@ -118,33 +118,27 @@ they are actually drawn.
 
 | | 3-page document | 1000-page document |
 |---|---|---|
-| First page on screen | 512 ms | 940–1090 ms |
+| First page on screen | 305 ms | 728 ms |
 | Whole process lifetime | 528 ms | 533 ms |
-| Memory | 210 MB | 208 MB |
+| Memory | 150 MB | 153 MB |
 | Scrolling, 1000 pages | — | **144 fps** (vsync-locked; no dropped frames) |
 
-**Process lifetime and memory do not grow with page count** — 528 ms and 210 MB
-for three pages, 533 ms and 208 MB for a thousand. That is the architectural
+**Process lifetime and memory do not grow with page count** — 528 ms and 150 MB
+for three pages, 533 ms and 153 MB for a thousand. That is the architectural
 claim and the numbers hold it: page geometry is cached once at load and
 rendering is fully virtualised, so a 1000-page file costs no more to hold open
 than a 3-page one.
 
-Time to the *first painted page* does grow, and this table used to imply
-otherwise. It is roughly twice as long on the 1000-page file, and it varies by
-15% between runs on the same machine, which is why it is written as a range.
-Whatever is behind that has not been investigated.
+Time to the *first painted page* does grow, roughly doubling on the 1000-page
+file, and it varies by about 15% between runs. This table previously implied it
+did not; it does.
 
-**Time-to-first-page and memory are worse than they were**, and this table used
-to claim 287 ms and 132 MB. Those numbers were real — a build at `eb40424`
-still measures 315 ms and 135 MB on this machine — and the regression arrived
-with `db222a8`, the commit that added printing, links, encrypted documents,
-settings and translations. It is entirely inside `engine.loadFromModule`, and it
-is **not** the printing stack, the settings read, the translators, the update
-checker, or the new sheets being built: each of those was tested and ruled out.
-The investigation, including how to reproduce the bisect, is in
-[docs/OPTIMISATION-PLAN.md](docs/OPTIMISATION-PLAN.md). Publishing the old
-numbers while the shipped build is slower would be the wrong thing to do, so
-these are the measured ones.
+A Chinese or Japanese interface reaches the first page in about 440 ms rather
+than 305 ms. That is the cost of loading and rasterising a CJK face, and it is
+real work rather than something to optimise away — but it is paid only by
+people who actually asked for that interface. Between v0.3.0 and v0.3.1 it was
+paid by everyone, because of a bug described in
+[docs/OPTIMISATION-PLAN.md](docs/OPTIMISATION-PLAN.md).
 
 For scale, SumatraPDF reaches input-idle on the same file in 248 ms — but that
 is a different measurement, not a like-for-like comparison, and the benchmark
