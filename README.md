@@ -1,5 +1,12 @@
 # LumenPDF
 
+## Handoff / 接手先讀
+
+1. [`STATUS.md`](STATUS.md)：現在、下一個動作、卡住／依賴。
+2. [`AGENTS.md`](AGENTS.md)：這個專案的規則。
+3. [`pipeline/PIPELINE.md`](pipeline/PIPELINE.md)：步驟與狀態。
+4. Latest [`logs/conversations/`](logs/conversations/) record.
+
 A PDF viewer and editor built for three things, in this order: **speed**,
 **restraint**, and **craft**.
 
